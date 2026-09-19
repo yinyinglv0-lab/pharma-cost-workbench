@@ -10,7 +10,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     HF_HUB_DISABLE_TELEMETRY=1 \
     ANONYMIZED_TELEMETRY=False \
     MPLCONFIGDIR=/tmp/matplotlib \
-    REPORT_CJK_FONT=/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc \
+    REPORT_CJK_FONT=/usr/share/fonts/truetype/noto/NotoSansSC-VF.ttf \
     HF_HOME=/tmp/huggingface \
     COST_AUTH_MODE=oidc \
     COST_TENANT_ID=default \
@@ -27,6 +27,10 @@ RUN apt-get update \
     && useradd --uid 10001 --gid 10001 --no-create-home --home-dir /tmp costapp
 
 WORKDIR /app
+# WQY lacks U+2212. Install an unmodified OFL TrueType font with both resources
+# pinned by immutable upstream commit, byte length and SHA256. Runtime is offline.
+COPY deploy/install_cjk_font.py /app/deploy/install_cjk_font.py
+RUN python /app/deploy/install_cjk_font.py
 ARG INSTALL_LOCAL_MODELS=true
 ARG TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu
 COPY requirements.txt requirements-models.txt /app/

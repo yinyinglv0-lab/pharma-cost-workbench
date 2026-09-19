@@ -49,7 +49,7 @@ CORE_TREES = {
     'report': ('__init__', 'datafill', 'export', 'model', 'registry', 'render', 'tables'),
     'scripts': ('backup_restore', 'bootstrap_system', 'preflight', 'run_task_worker',
         'freeze_core_wheels', 'verify_restored_system', 'validate_human_scores', 'build_source_bundle'),
-    'deploy': ('entrypoint', 'generate_inventory', 'healthcheck', 'container_smoke'),
+    'deploy': ('entrypoint', 'generate_inventory', 'healthcheck', 'container_smoke', 'install_cjk_font'),
     'rag_fixed_v1': ('__init__',),
 }
 DOCUMENTS = (

@@ -1,6 +1,6 @@
 # 第三方组件来源与通知
 
-本文件只记录随源码包实际携带的浏览器资源及其上游通知，不为本项目代码选择许可证，也不扩大赛题数据或模型权重的分发范围。已取得的纯源码发布授权及项目尚未选定自身开源许可证的状态见[README](README.md)；第三方组件仍各自遵循对应许可，不能由一项源码发布授权替代所有权利人的使用与分发条件。
+本文件记录随源码包携带的浏览器资源，以及容器构建时取得的字体来源和上游通知，不为本项目代码选择许可证，也不扩大赛题数据或模型权重的分发范围。已取得的纯源码发布授权及项目尚未选定自身开源许可证的状态见[README](README.md)；第三方组件仍各自遵循对应许可，不能由一项源码发布授权替代所有权利人的使用与分发条件。
 
 ## Apache ECharts
 
@@ -19,6 +19,19 @@ ECharts 5.5.1的[package.json](https://raw.githubusercontent.com/apache/echarts/
 |---|---|---|
 | ZRender 5.6.0 | [BSD 3-Clause](assets/licenses/LICENSE-zrender) | [zrender 5.6.0 LICENSE](https://raw.githubusercontent.com/ecomfe/zrender/5.6.0/LICENSE)；JS中保留原ZRender版权头 |
 | tslib辅助代码 | [Microsoft许可通知](assets/licenses/LICENSE-tslib) | 直接抄录本地 `echarts.min.js`的Microsoft版权/许可段；不声称该通知授予ECharts以外作品的权利 |
+
+## 容器构建字体：Noto Sans SC
+
+字体二进制不随纯源码ZIP分发；`deploy/install_cjk_font.py`在Docker构建阶段取得以下未修改资源，运行时不下载。来源为[Google Fonts固定提交目录](https://github.com/google/fonts/tree/a85815a42757630ce188fdad368c2dfc444d4773/ofl/notosanssc)。
+
+| 资源 | 固定SHA256 | 镜像内位置 |
+|---|---|---|
+| [NotoSansSC[wght].ttf](https://raw.githubusercontent.com/google/fonts/a85815a42757630ce188fdad368c2dfc444d4773/ofl/notosanssc/NotoSansSC%5Bwght%5D.ttf)，17,772,300字节 | `a3041811a78c361b1de50f953c805e0244951c21c5bd412f7232ef0d899af0da` | `/usr/share/fonts/truetype/noto/NotoSansSC-VF.ttf` |
+| [OFL.txt](https://raw.githubusercontent.com/google/fonts/a85815a42757630ce188fdad368c2dfc444d4773/ofl/notosanssc/OFL.txt)，4,388字节 | `1c05c68c34f9708415aada51f17e1b0092d2cea709bf4a94cd38114f9e73d7d9` | `/usr/share/doc/project4-fonts/NotoSansSC-OFL.txt` |
+
+上游版权为“Copyright 2014-2021 Adobe (http://www.adobe.com/), with Reserved Font Name 'Source'”；SIL Open Font License 1.1允许在保留版权与许可等条件下打包、嵌入和再分发，不能单独销售字体。这里仅重命名磁盘文件、保留原始字节，没有修改字形、名称表或变量轴；字体`wght`轴默认100。安装器同时写入`FONT-MANIFEST.json`，记录固定来源、字节数、hash和未变换状态；镜像分发时须保留上述版权许可。生成文档不因此被要求使用OFL，OFL也不扩展为本项目源码许可证。
+
+Debian的文泉驿/Noto系统包保留各自发行版权记录，但WQY Zen Hei 0.9.45-8实测缺U+2212，默认报告选择以上覆盖所需字符的TrueType字体。不能把仅有CFF轮廓的Noto CJK OTF存在等同于ReportLab TrueType嵌入可用。
 
 ## 安装时依赖及未附组件
 

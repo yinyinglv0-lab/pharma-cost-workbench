@@ -33,13 +33,13 @@
     "legacy Chroma/FlagEmbedding/graph tools except an empty namespace initializer",
     "tests requiring original tables/templates, real model workers, browsers or official mock code"
   ],
-  "file_count": 107,
+  "file_count": 108,
   "files": [
     {
-      "bytes": 1138,
+      "bytes": 1166,
       "path": ".dockerignore",
-      "sha256": "31dfe8fe5d8108231b1d57a4c0bf0222f1e9521e3ef9bf2cbbbe3391b2db4c7e",
-      "source_sha256": "31dfe8fe5d8108231b1d57a4c0bf0222f1e9521e3ef9bf2cbbbe3391b2db4c7e",
+      "sha256": "48b5aa52f168215e22af5819bc3cdd9195ed34281ee7e0985c56cbacda7ded24",
+      "source_sha256": "48b5aa52f168215e22af5819bc3cdd9195ed34281ee7e0985c56cbacda7ded24",
       "transformation": "none"
     },
     {
@@ -64,24 +64,24 @@
       "transformation": "none"
     },
     {
-      "bytes": 3020,
+      "bytes": 3294,
       "path": "Dockerfile",
-      "sha256": "e10c76e296913ee705ad9f30213df55f89c7c4ef24113cd5f5a19c3165df229f",
-      "source_sha256": "e10c76e296913ee705ad9f30213df55f89c7c4ef24113cd5f5a19c3165df229f",
+      "sha256": "48c91daaffd52e339ea2f673e215112f6fa3cdf4d92e2799c675527e739914c4",
+      "source_sha256": "48c91daaffd52e339ea2f673e215112f6fa3cdf4d92e2799c675527e739914c4",
       "transformation": "none"
     },
     {
-      "bytes": 16519,
+      "bytes": 17133,
       "path": "README.md",
-      "sha256": "9efd1c6f67c2dd57940f2ddae2772c53e7bba321ee80b115dcaa651e785c2054",
-      "source_sha256": "9efd1c6f67c2dd57940f2ddae2772c53e7bba321ee80b115dcaa651e785c2054",
+      "sha256": "1e7ac5b809a2b3d104fcbd125ba2968ec735ac6ec1eb2f0e75723a2da096e1fc",
+      "source_sha256": "1e7ac5b809a2b3d104fcbd125ba2968ec735ac6ec1eb2f0e75723a2da096e1fc",
       "transformation": "none"
     },
     {
-      "bytes": 3436,
+      "bytes": 5257,
       "path": "THIRD_PARTY_NOTICES.md",
-      "sha256": "a39811491155f7709cee50d62540931d516c82da0b5351330dbd292ff2cd8501",
-      "source_sha256": "a39811491155f7709cee50d62540931d516c82da0b5351330dbd292ff2cd8501",
+      "sha256": "1989dcbc90ca144bf147955da84e3d170371ce98efc76dbdafcfd6d267203bd4",
+      "source_sha256": "1989dcbc90ca144bf147955da84e3d170371ce98efc76dbdafcfd6d267203bd4",
       "transformation": "none"
     },
     {
@@ -141,10 +141,10 @@
       "transformation": "none"
     },
     {
-      "bytes": 12909,
+      "bytes": 12987,
       "path": "app_pages/tasks.py",
-      "sha256": "ab08bc02aad3dfc66b7ce4b480d80ae280b0306fd23fbf86a021b2b141184be5",
-      "source_sha256": "ab08bc02aad3dfc66b7ce4b480d80ae280b0306fd23fbf86a021b2b141184be5",
+      "sha256": "323d7233a5ba526c5a2e99efa8adfce74553e23180a403dc7dda223608bd106d",
+      "source_sha256": "323d7233a5ba526c5a2e99efa8adfce74553e23180a403dc7dda223608bd106d",
       "transformation": "none"
     },
     {
@@ -316,10 +316,10 @@
       "transformation": "none"
     },
     {
-      "bytes": 13470,
+      "bytes": 16050,
       "path": "deploy/container_smoke.py",
-      "sha256": "516a10cb158ad4a1595c170daef7c9f59e41229a44e3109cc49fc2826d9e2568",
-      "source_sha256": "516a10cb158ad4a1595c170daef7c9f59e41229a44e3109cc49fc2826d9e2568",
+      "sha256": "0027e0c09b87378892e68edb67ddee3394bb041c3edd12d8c0dfd44fe40c27ea",
+      "source_sha256": "0027e0c09b87378892e68edb67ddee3394bb041c3edd12d8c0dfd44fe40c27ea",
       "transformation": "none"
     },
     {
@@ -344,6 +344,13 @@
       "transformation": "none"
     },
     {
+      "bytes": 4034,
+      "path": "deploy/install_cjk_font.py",
+      "sha256": "4758358f41747a0b611199dd5ac31a4d5c93a38576da0dd6db76a8b7c3a19a40",
+      "source_sha256": "4758358f41747a0b611199dd5ac31a4d5c93a38576da0dd6db76a8b7c3a19a40",
+      "transformation": "none"
+    },
+    {
       "bytes": 1929,
       "path": "deploy/nginx.conf.example",
       "sha256": "d2d7619d87c91a1697c10edd8d3b0da8c3df19615ab72a37dca5f94253eb036f",
@@ -365,10 +372,10 @@
       "transformation": "none"
     },
     {
-      "bytes": 63779,
+      "bytes": 63873,
       "path": "docs/Prompt与模型评测协议.md",
-      "sha256": "dfc0ba8f873771aa05292bd1996f54d366bfd0633889d3809682bcc8892f5382",
-      "source_sha256": "dfc0ba8f873771aa05292bd1996f54d366bfd0633889d3809682bcc8892f5382",
+      "sha256": "7276cc5d0db14d922d1afd63392db4ff6029f769ca62d2626315bfa2bef142c4",
+      "source_sha256": "7276cc5d0db14d922d1afd63392db4ff6029f769ca62d2626315bfa2bef142c4",
       "transformation": "none"
     },
     {
@@ -386,17 +393,17 @@
       "transformation": "none"
     },
     {
-      "bytes": 39507,
+      "bytes": 39520,
       "path": "docs/用户操作手册.md",
-      "sha256": "6d88f3a98b62b9ad420a63b281b50b4a8efdcad9d8a30c674fd73bb43fc6c6d9",
-      "source_sha256": "6d88f3a98b62b9ad420a63b281b50b4a8efdcad9d8a30c674fd73bb43fc6c6d9",
+      "sha256": "4970e4530c477902e46b4437a513f40182002a887298ceb759fea5b8711d2a86",
+      "source_sha256": "4970e4530c477902e46b4437a513f40182002a887298ceb759fea5b8711d2a86",
       "transformation": "none"
     },
     {
-      "bytes": 27771,
+      "bytes": 28119,
       "path": "docs/部署与运维手册.md",
-      "sha256": "9d4e2c871979ab4120abc174bf57a742495f3c743b234f1b4735526182615db8",
-      "source_sha256": "9d4e2c871979ab4120abc174bf57a742495f3c743b234f1b4735526182615db8",
+      "sha256": "8b3c3aa8a79217cce63c9979467457b593bdb66a0fd77ce2ad0a26251dbf547d",
+      "source_sha256": "8b3c3aa8a79217cce63c9979467457b593bdb66a0fd77ce2ad0a26251dbf547d",
       "transformation": "none"
     },
     {
@@ -680,10 +687,10 @@
       "transformation": "none"
     },
     {
-      "bytes": 25758,
+      "bytes": 25778,
       "path": "scripts/build_source_bundle.py",
-      "sha256": "720ff7a9b4824c34a426966307073f6d128849bf2a6a410dc31d211c9749e720",
-      "source_sha256": "720ff7a9b4824c34a426966307073f6d128849bf2a6a410dc31d211c9749e720",
+      "sha256": "41c3f14d72e4287b74ee2b773d217e8023696298d0d095a2a2938d6c56672e1a",
+      "source_sha256": "41c3f14d72e4287b74ee2b773d217e8023696298d0d095a2a2938d6c56672e1a",
       "transformation": "none"
     },
     {
@@ -789,7 +796,7 @@
   "publication_status": "local_review_bundle",
   "publication_target": "https://github.com/yinyinglv0-lab/pharma-cost-workbench",
   "scan": {
-    "files_scanned": 107,
+    "files_scanned": 108,
     "format": "UTF-8 text",
     "high_confidence_findings": [],
     "limitation": "Pattern/allowlist checks are not a proof of no secrets and do not grant distribution rights.",
@@ -803,7 +810,7 @@
           "reason": "unused legacy rag_evidence helper; governed entrypoint uses knowledge_context"
         }
       ],
-      "python_files_parsed": 78,
+      "python_files_parsed": 79,
       "scope": "AST and explicit page allowlist; not execution, pip dependency resolution or formal callgraph proof",
       "static_local_import_check": "passed_with_declared_optional_legacy_import"
     },
@@ -902,7 +909,7 @@
   },
   "schema": "project4-source-bundle/1.0",
   "scope": "literal source-only allowlist; excluded directories never enumerated or read",
-  "source_tree_sha256": "d1e37149892d5ac818967b1d763c76aa5bf732326b4c58b0d07e8a92eed7d0f6",
+  "source_tree_sha256": "80d27b37b40531ca6fc1ce3ba7410f01bfc545f1d3a8f8b470d6c1466e195a63",
   "third_party": {
     "echarts_sha256": "e84270bd0cd5bdf60fefc26d00c2a391cb2e81f4d26a7a9ee16185a54773a3cf",
     "echarts_version": "5.5.1",

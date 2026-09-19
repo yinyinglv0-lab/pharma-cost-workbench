@@ -31,6 +31,7 @@
 !deploy/healthcheck.py
 !deploy/generate_inventory.py
 !deploy/container_smoke.py
+!deploy/install_cjk_font.py
 !deploy/streamlit.config.toml
 !Dockerfile
 !.dockerignore

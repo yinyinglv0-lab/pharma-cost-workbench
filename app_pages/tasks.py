@@ -45,8 +45,10 @@ if next_id in options:
     st.session_state['task_selected'] = next_id
 if st.session_state.get('task_selected') not in options:
     st.session_state.pop('task_selected', None)
+# Streamlit serializes the formatted label. Keep it unchanged across lifecycle
+# transitions so a pending browser event still resolves to the same task ID.
 selected_id = st.selectbox('任务对象', options, format_func=lambda key: '新建草稿' if key == 'new' else
-                           f"{by_id[key]['content']['task_title']} · {key} · {labels.get(by_id[key]['workflow_status'], by_id[key]['workflow_status'])} · v{by_id[key]['version']}", key='task_selected')
+                           f"{by_id[key]['content']['task_title']} · {key} · v{by_id[key]['version']}", key='task_selected')
 try:
     current = repo.get(selected_id, actor=principal) if selected_id != 'new' else None
 except (ValueError, PermissionError, OSError) as exc:

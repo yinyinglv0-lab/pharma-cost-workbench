@@ -177,6 +177,46 @@ def embedded_font_streams(page):
     return streams
 
 
+def check_installed_font():
+    from deploy.install_cjk_font import RESOURCES
+    font_root = Path('/usr/share/fonts/truetype/noto')
+    notice_root = Path('/usr/share/doc/project4-fonts')
+    require(os.environ.get('REPORT_CJK_FONT') == str(font_root / 'NotoSansSC-VF.ttf'),
+            'configured_font_not_pinned_build_font')
+    checked = []
+    for resource in RESOURCES:
+        path = (font_root if resource['kind'] == 'font' else notice_root) / resource['file']
+        raw = path.read_bytes()
+        require(len(raw) == resource['bytes'] and digest(raw) == resource['sha256'],
+                'installed_font_or_license_hash_mismatch')
+        checked.append({'file': path.name, 'bytes': len(raw), 'sha256': digest(raw)})
+    return {'font_and_license_verified': True, 'resources': checked}
+
+
+def font_diagnostics():
+    """Expose only synthetic missing codepoints, font basenames and error types."""
+    from reportlab.pdfbase.ttfonts import TTFont
+    required = set(SAMPLE_TEXT + '成本报告材料制造费用分析来源月份季度专题盒采购实物耗用未送达')
+    candidates = [os.environ.get('REPORT_CJK_FONT'),
+                  '/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc',
+                  '/usr/share/fonts/truetype/noto/NotoSansSC-VF.ttf',
+                  '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc']
+    diagnostics = []
+    for value in dict.fromkeys(item for item in candidates if item):
+        path = Path(value)
+        item = {'file': path.name, 'present': path.is_file()}
+        if item['present']:
+            try:
+                item['sha256'] = digest(path.read_bytes())
+                font = TTFont('SmokeFontDiagnostic', str(path), subfontIndex=0)
+                item['missing_codepoints'] = [f'U+{ord(char):04X}' for char in sorted(required)
+                                             if not char.isspace() and ord(char) not in font.face.charToGlyph]
+            except Exception as exc:
+                item['error_type'] = type(exc).__name__
+        diagnostics.append(item)
+    return diagnostics
+
+
 def check_document_io(root):
     from docx import Document
     from docx.oxml.ns import qn
@@ -246,13 +286,16 @@ def main():
                 imports = check_imports()
                 stage = 'api'
                 api = check_api(data_root)
+                stage = 'installed_font_and_license'
+                font_installation = check_installed_font()
                 stage = 'font_and_documents'
                 documents = check_document_io(root)
                 require(not any(network[key] for key in ('connection_attempts', 'listener_attempts',
                                                           'other_bind_attempts')), 'unexpected_socket_attempt')
             report = {'schema_version': 'core-container-smoke/1.0', 'status': 'passed',
                       'uid': os.getuid(), 'gid': os.getgid(), 'pip_check_exit_code': result.returncode,
-                      'imports': imports, 'api': api, 'documents': documents,
+                      'imports': imports, 'api': api, 'font_installation': font_installation,
+                      'documents': documents,
                       'application_socket_checks': network, 'model_calls': 0, 'mock_calls': 0,
                       'production_oidc_checked': False, 'full_business_report_checked': False,
                       'external_artifacts_published': False}
@@ -261,8 +304,14 @@ def main():
     except Exception as exc:
         # Static check codes only; no provider replies, data or environment values.
         error = str(exc) if isinstance(exc, SmokeFailure) else type(exc).__name__
-        print(json.dumps({'schema_version': 'core-container-smoke/1.0', 'status': 'failed',
-                          'stage': stage, 'error': error, 'external_artifacts_published': False}), file=sys.stderr)
+        failure = {'schema_version': 'core-container-smoke/1.0', 'status': 'failed',
+                   'stage': stage, 'error': error, 'external_artifacts_published': False}
+        if stage in ('installed_font_and_license', 'font_and_documents'):
+            try:
+                failure['font_diagnostics'] = font_diagnostics()
+            except Exception as diagnostic_error:
+                failure['font_diagnostics_error_type'] = type(diagnostic_error).__name__
+        print(json.dumps(failure, ensure_ascii=True), file=sys.stderr)
         return 1
 
 

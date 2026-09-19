@@ -71,11 +71,11 @@ local模式是当前OS用户全角色演示，只允许本机回环访问，审�
 
 `Dockerfile`、`compose.yaml`及 `deploy/`为单实例部署材料。容器固定OIDC，入口监管API、UI与任务worker；必需身份配置或服务主体不合格时预检拒绝启动。`COST_WORKER_SUBJECT`必须是服务器映射中的有效发送主体。
 
-Docker构建及依赖安装会访问选定的软件源；镜像同时安装系统包与Debian分发的中文字体，实际版本、字体hash与许可应随构建记录保存。数据卷、私有模型配置卷、OIDC秘密只读挂载分别管理，授权原件不进入构建上下文。`INSTALL_LOCAL_MODELS`生产构建默认保持`true`，需要另行提供已授权模型权重。详见 [部署与运维手册](docs/部署与运维手册.md)。
+Docker构建及依赖安装会访问选定的软件源。默认报告字体为Noto Sans SC TrueType；[deploy/install_cjk_font.py](deploy/install_cjk_font.py)仅在构建时从Google Fonts固定提交取得未修改字体及SIL OFL 1.1许可，并分别核对字节数和SHA256。字体安装到`/usr/share/fonts/truetype/noto/NotoSansSC-VF.ttf`，许可与`FONT-MANIFEST.json`位于`/usr/share/doc/project4-fonts/`。Debian文泉驿仍保留，但其当前包缺少U+2212负号，不能用于这一字符集的完整导出。源码ZIP不携带字体二进制，运行时也不下载；来源与固定hash见[第三方通知](THIRD_PARTY_NOTICES.md)。数据卷、私有模型配置卷、OIDC秘密只读挂载分别管理，授权原件不进入构建上下文。`INSTALL_LOCAL_MODELS`生产构建默认保持`true`，需要另行提供已授权模型权重。详见 [部署与运维手册](docs/部署与运维手册.md)。
 
 公开CI另设`core-container-smoke`：在Ubuntu构建时明确传入`INSTALL_LOCAL_MODELS=false`，随后以镜像默认UID/GID 10001运行[deploy/container_smoke.py](deploy/container_smoke.py)。运行容器使用`--network none`、只读根文件系统、临时`/tmp`、禁用健康检查，没有端口映射、主机数据挂载、secrets、镜像推送或artifact上传。仅此一次性smoke覆盖entrypoint并在进程内使用loopback local身份；正式部署入口的OIDC预检保持不变。
 
-smoke检查`pip check`、正式核心模块和真实LangChain类型，进程内API健康/身份/状态/空任务汇总及非loopback身份拒绝；全部数据路径指向新临时目录。字体选择通过`report.export.font_descriptor()`，要求覆盖常规中文、U+2EE9部首和U+2212负号，再生成单页合成PDF，验证嵌入字体stream与提取文本，并用python-docx自带空白文档验证中文/符号的内存解析和临时磁盘读写。缺字或导出失败直接使检查失败，生成文件随临时目录删除。通过仅证明该提交的Linux核心镜像与合成导出检查可运行；生产OIDC、可选模型、完整业务报告及目标环境仍按各自记录验收。实际是否通过，以对应Actions任务日志为准。
+smoke检查`pip check`、正式核心模块和真实LangChain类型，进程内API健康/身份/状态/空任务汇总及非loopback身份拒绝；全部数据路径指向新临时目录。先验证镜像内字体与许可的固定hash，再通过`report.export.font_descriptor()`选择字体，要求覆盖常规中文、U+2EE9部首和U+2212负号，再生成单页合成PDF，验证嵌入字体stream与提取文本，并用python-docx自带空白文档验证中文/符号的内存解析和临时磁盘读写。缺字或导出失败直接使检查失败，诊断仅输出候选字体basename/hash、错误类型和合成字符的缺失码位；生成文件随临时目录删除。通过仅证明该提交的Linux核心镜像与合成导出检查可运行；生产OIDC、可选模型、完整业务报告及目标环境仍按各自记录验收。实际是否通过，以对应Actions任务日志为准。
 
 ## 6. 测试范围
 
