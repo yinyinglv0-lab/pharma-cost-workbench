@@ -1,0 +1,8 @@
+# Optional offline BGE dense retrieval. Install core first. Weights are not redistributed.
+# Match the deployment CPU/GPU platform when selecting the torch wheel index.
+torch==2.12.1
+transformers==5.16.1
+tokenizers==0.23.2
+safetensors==0.8.0
+sentencepiece==0.2.2
+huggingface-hub==1.31.0

@@ -1,0 +1,11 @@
+# After restore and rehearsal approval, mount the NEW recovery root.
+# It must contain data/, managed/, restore_report.json and restore_manifest.json.
+# Stop the old instance first; never run two writers on the same root.
+services:
+  cost:
+    volumes:
+      - type: bind
+        source: ${COST_RESTORE_HOST_ROOT:?Set the verified recovery root containing data and managed}
+        target: /var/lib/project4
+        bind:
+          create_host_path: false

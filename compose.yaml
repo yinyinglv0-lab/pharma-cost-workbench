@@ -1,0 +1,81 @@
+name: project4
+
+# One organization, one application instance. Host ports are loopback only.
+# Place an approved HTTPS reverse proxy on this host in front of the dashboard.
+services:
+  cost:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        INSTALL_LOCAL_MODELS: ${INSTALL_LOCAL_MODELS:-true}
+        TORCH_INDEX_URL: ${TORCH_INDEX_URL:-https://download.pytorch.org/whl/cpu}
+    image: project4-cost:${COST_IMAGE_TAG:-local}
+    init: true
+    restart: unless-stopped
+    user: "10001:10001"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    ports:
+      - "127.0.0.1:${COST_WEB_PORT:-8501}:8501"
+      - "127.0.0.1:${COST_API_PORT:-8000}:8000"
+    environment:
+      COST_AUTH_MODE: oidc
+      COST_TENANT_ID: default
+      COST_BIND_HOST: 0.0.0.0
+      COST_DATA_DIR: /var/lib/project4/data
+      COST_MANAGED_DIR: /var/lib/project4/managed
+      COST_LLM_CONFIG_FILE: /var/lib/project4-private/llm.json
+      COST_API_BASE: http://127.0.0.1:8000
+      COST_OIDC_ISSUER: ${COST_OIDC_ISSUER:?Set an approved HTTPS OIDC issuer}
+      COST_OIDC_AUDIENCE: ${COST_OIDC_AUDIENCE:?Set the API token audience}
+      COST_OIDC_JWKS_URL: ${COST_OIDC_JWKS_URL:?Set the approved HTTPS JWKS URL}
+      COST_AUTHORIZATION_FILE: /run/secrets/authorization.json
+      COST_WORKER_SUBJECT: ${COST_WORKER_SUBJECT:?Set the mapped service subject with task.send permission}
+      COST_STREAMLIT_SECRETS: /app/.streamlit/secrets.toml
+      BGE_M3_PATH: /models/bge-m3
+      BGE_RERANKER_PATH: /models/bge-reranker-v2-m3
+      HF_HUB_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
+      HF_HUB_DISABLE_TELEMETRY: "1"
+      ANONYMIZED_TELEMETRY: "False"
+    volumes:
+      - type: volume
+        source: cost_data
+        target: /var/lib/project4
+      - type: volume
+        source: cost_private
+        target: /var/lib/project4-private
+      - type: bind
+        source: ${COST_AUTHORIZATION_HOST_FILE:?Set the authorization JSON file path}
+        target: /run/secrets/authorization.json
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${COST_STREAMLIT_SECRETS_HOST_FILE:?Set the Streamlit secrets TOML file path}
+        target: /app/.streamlit/secrets.toml
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./deploy/streamlit.config.toml
+        target: /app/.streamlit/config.toml
+        read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=1073741824,mode=1777
+    pids_limit: 256
+    mem_limit: ${COST_MEMORY_LIMIT:-8g}
+    cpus: ${COST_CPUS:-2.0}
+    stop_grace_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+volumes:
+  cost_data:
+  cost_private:

@@ -1,0 +1,46 @@
+# Example for an EXISTING host HTTPS proxy. Replace hostname/certificate paths.
+# Install/activation is an operator action; this file does not open any port.
+# Put map/log_format in nginx http {} context; put server blocks there too.
+map $http_upgrade $cost_connection_upgrade {
+    default upgrade;
+    '' close;
+}
+# Do not log query strings (OIDC callback codes), cookies or Authorization headers.
+log_format cost_safe '$time_iso8601 $request_method $uri $status $body_bytes_sent $request_time';
+
+server {
+    listen 80;
+    server_name cost.example.invalid;
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    server_name cost.example.invalid;
+    ssl_certificate /etc/nginx/tls/cost/fullchain.pem;
+    ssl_certificate_key /etc/nginx/tls/cost/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    client_max_body_size 22m;
+    access_log /var/log/nginx/cost-access.log cost_safe;
+    # Standard nginx error logs may include upstream URLs. Keep restricted and
+    # do not enable debug logging during OIDC callback traffic.
+    error_log /var/log/nginx/cost-error.log crit;
+    add_header X-Content-Type-Options nosniff always;
+    add_header Referrer-Policy same-origin always;
+
+    location / {
+        proxy_pass http://127.0.0.1:8501;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $cost_connection_upgrade;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_read_timeout 300s;
+        proxy_buffering off;
+    }
+    # API remains accessible on host loopback for controlled integration.
+    # Add a separate approved API route/hostname only after validating bearer
+    # tokens, rate limits and the enterprise CORS policy. UI uses its shared
+    # authenticated service layer; a Streamlit login cookie is not an API token.
+}

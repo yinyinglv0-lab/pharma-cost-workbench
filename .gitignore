@@ -1,0 +1,56 @@
+# Runtime state and private configuration
+.local/
+.runtime/
+.artifacts/
+.env
+.env.*
+!.env.example
+.streamlit/secrets.toml
+**/authorization.json
+**/credentials.json
+managed/
+kb/
+data_upload/
+docs_upload/
+outputs/
+logs/
+backups/
+artifacts/
+delivery/
+
+# Local Python environments, caches and generated files
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Competition inputs and derived evidence stay outside the public repository.
+*.csv
+*.xlsx
+*.xls
+*.pdf
+*.docx
+*.doc
+*.pptx
+*.mp4
+*.webm
+*.db
+*.db-*
+*.sqlite*
+
+# Private keys, downloaded models and fonts are separate authorized inputs.
+*.key
+*.pem
+*.pfx
+*.safetensors
+*.onnx
+*.bin
+*.pt
+*.pth
+*.ttf
+*.ttc
+*.otf
+models/

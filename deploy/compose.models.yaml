@@ -1,0 +1,11 @@
+# Optional offline model mount. This file never downloads model files.
+# docker compose -f compose.yaml -f deploy/compose.models.yaml up -d
+services:
+  cost:
+    volumes:
+      - type: bind
+        source: ${COST_MODELS_HOST_DIR:?Set an approved local models directory}
+        target: /models
+        read_only: true
+        bind:
+          create_host_path: false

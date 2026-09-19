@@ -1,0 +1,12 @@
+# Optional historical RAG/ingestion scripts; not used by the governed application.
+# Review each package's license and model licenses before use/distribution.
+-r requirements.txt
+-r requirements-models.txt
+chromadb==1.5.9
+FlagEmbedding==1.4.2
+pdfplumber==0.11.10
+PyMuPDF==1.27.2.3
+rank-bm25==0.2.2
+jieba==0.42.1
+networkx==3.6.1
+watchdog==6.0.0

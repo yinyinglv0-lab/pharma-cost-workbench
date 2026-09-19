@@ -1,0 +1,133 @@
+name: Source and core container checks
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: source-tests-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  synthetic-tests:
+    name: Synthetic tests (Ubuntu, Python 3.12)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    env:
+      PYTHONUTF8: "1"
+      PYTHONDONTWRITEBYTECODE: "1"
+      PYTHONNOUSERSITE: "1"
+      PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
+      MPLBACKEND: Agg
+      COST_AUTH_MODE: local
+      COST_BIND_HOST: 127.0.0.1
+      STREAMLIT_SERVER_ADDRESS: 127.0.0.1
+      STREAMLIT_BROWSER_GATHER_USAGE_STATS: "false"
+      COST_LLM_API_KEY: ""
+      DASHSCOPE_API_KEY: ""
+      OPENAI_API_KEY: ""
+      COST_OFFICIAL_MOCK_SCRIPT: ""
+      COST_WORKER_SUBJECT: ""
+      HF_HUB_OFFLINE: "1"
+      HF_DATASETS_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
+      HF_HUB_DISABLE_TELEMETRY: "1"
+      DO_NOT_TRACK: "1"
+      LANGCHAIN_TRACING: "false"
+      LANGCHAIN_TRACING_V2: "false"
+      LANGCHAIN_HANDLER: ""
+      LANGCHAIN_API_KEY: ""
+      LANGSMITH_TRACING: "false"
+      LANGSMITH_TRACING_V2: "false"
+      LANGSMITH_API_KEY: ""
+      LANGSMITH_ENDPOINT: https://tracing-disabled.invalid
+    steps:
+      - name: Check out source without persistent credentials
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          submodules: false
+
+      - name: Select Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install core and test dependencies
+        # The Windows wheel lock is deliberately not used on Ubuntu.
+        run: |
+          python -m pip install --disable-pip-version-check --no-input -r requirements.txt pytest==9.1.1
+          python -m pip check
+
+      - name: Prepare an empty test data root
+        run: |
+          ci_root="$(mktemp -d "$RUNNER_TEMP/cost-ci.XXXXXX")"
+          mkdir -p "$ci_root/data" "$ci_root/work" "$ci_root/cache"
+          {
+            printf 'COST_DATA_DIR=%s\n' "$ci_root/data"
+            printf 'COST_MANAGED_DIR=%s\n' "$ci_root/managed"
+            printf 'COST_CHROMA_PATH=%s\n' "$ci_root/chroma"
+            printf 'COST_LLM_CONFIG_FILE=%s\n' "$ci_root/no-model.json"
+            printf 'BGE_M3_PATH=%s\n' "$ci_root/no-bge-model"
+            printf 'BGE_RERANKER_PATH=%s\n' "$ci_root/no-reranker-model"
+            printf 'HF_HOME=%s\n' "$ci_root/cache/huggingface"
+            printf 'MPLCONFIGDIR=%s\n' "$ci_root/cache/matplotlib"
+            printf 'CI_EMPTY_WORKDIR=%s\n' "$ci_root/work"
+            printf 'PYTHONPATH=%s\n' "$GITHUB_WORKSPACE"
+          } >> "$GITHUB_ENV"
+
+      - name: Run the nine reviewed synthetic test files
+        # TestClient/AppTest are in-process. Launcher checks bind loopback only.
+        # Model clients/encoders are fakes; no official mock service is started.
+        run: |
+          cd "$CI_EMPTY_WORKDIR"
+          python -m pytest -q --strict-config --strict-markers \
+            --rootdir "$GITHUB_WORKSPACE" --confcutdir "$GITHUB_WORKSPACE" \
+            "$GITHUB_WORKSPACE/tests/test_model_gateway.py" \
+            "$GITHUB_WORKSPACE/tests/test_knowledge_versions.py" \
+            "$GITHUB_WORKSPACE/tests/test_knowledge_release.py" \
+            "$GITHUB_WORKSPACE/tests/test_operations.py" \
+            "$GITHUB_WORKSPACE/tests/test_system_observability.py" \
+            "$GITHUB_WORKSPACE/tests/test_launch_system.py" \
+            "$GITHUB_WORKSPACE/tests/test_knowledge_langchain.py" \
+            "$GITHUB_WORKSPACE/tests/test_human_scores.py" \
+            "$GITHUB_WORKSPACE/tests/test_attribution_repair.py"
+
+  core-container-smoke:
+    name: Core image (synthetic, offline runtime)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out source without persistent credentials
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          submodules: false
+
+      - name: Build core image without local model dependencies
+        # Only source is public. .dockerignore excludes data, secrets and models.
+        # The Dockerfile's production default remains INSTALL_LOCAL_MODELS=true.
+        run: |
+          docker build --progress=plain --build-arg INSTALL_LOCAL_MODELS=false \
+            --tag "project4-core-ci:$GITHUB_SHA" .
+
+      - name: Check core imports, API, embedded fonts and synthetic documents
+        # No port publishing, host mounts, secrets, image push or artifact upload.
+        # Entry point override is limited to this disposable synthetic smoke.
+        run: |
+          docker run --rm --network none --no-healthcheck --read-only --cap-drop ALL \
+            --security-opt no-new-privileges --pids-limit 256 \
+            --tmpfs /tmp:rw,nosuid,nodev,size=256m,mode=1777 \
+            --env PYTHONNOUSERSITE=1 --env PYTHONUTF8=1 \
+            --entrypoint python "project4-core-ci:$GITHUB_SHA" \
+            -B deploy/container_smoke.py
