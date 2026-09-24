@@ -68,7 +68,6 @@ DOCUMENTS = (
     'docs/任务级模型配置.md', 'docs/跨行业迁移与边界.md',
     'docs/第三机评委部署与验收.md', 'docs/各模块技术与能力边界.md',
     'docs/第二轮核查实施与运行说明.md', 'docs/受控散文生成与阅读导出.md',
-    'docs/技术方案文档_提交版.md', 'docs/评测报告_提交版.md', 'docs/演示视频讲稿_5分钟.md',
     'config/manufacturing_examples/README.md',
 )
 # Public declarative semantics / inactive schema templates, not deployed business

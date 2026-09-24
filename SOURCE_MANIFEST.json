@@ -390,7 +390,7 @@
     "legacy Chroma/FlagEmbedding/graph tools except an empty namespace initializer",
     "tests unconditionally requiring original tables/templates, real model workers, browsers or official mock code"
   ],
-  "file_count": 284,
+  "file_count": 281,
   "files": [
     {
       "bytes": 4617,
@@ -1219,13 +1219,6 @@
       "transformation": "none"
     },
     {
-      "bytes": 13973,
-      "path": "docs/技术方案文档_提交版.md",
-      "sha256": "b8e23b0275492d286b46f5ab61df02c04cd0cd15107e5249673772173f512780",
-      "source_sha256": "b8e23b0275492d286b46f5ab61df02c04cd0cd15107e5249673772173f512780",
-      "transformation": "none"
-    },
-    {
       "bytes": 17496,
       "path": "docs/数据字典与交付边界.md",
       "sha256": "ac37bcbe48b523c368815d7ea3b32860d1135f6468881c4dea7a193ee18c68af",
@@ -1237,13 +1230,6 @@
       "path": "docs/模块一V2与分析辅助增量说明.md",
       "sha256": "bbb637523a8b6e67b85a4be38f029c7d96b4ade7c544dc935c4eeeb1374e5318",
       "source_sha256": "bbb637523a8b6e67b85a4be38f029c7d96b4ade7c544dc935c4eeeb1374e5318",
-      "transformation": "none"
-    },
-    {
-      "bytes": 5510,
-      "path": "docs/演示视频讲稿_5分钟.md",
-      "sha256": "fc59bce7b6f475632d21fde51dd49d8cfaca72f405131c214818613f3508947b",
-      "source_sha256": "fc59bce7b6f475632d21fde51dd49d8cfaca72f405131c214818613f3508947b",
       "transformation": "none"
     },
     {
@@ -1265,13 +1251,6 @@
       "path": "docs/第二轮核查实施与运行说明.md",
       "sha256": "2b781d25177d479db8c67e758032f140f0d99846ebdecad09ef5f12f73e8e91a",
       "source_sha256": "2b781d25177d479db8c67e758032f140f0d99846ebdecad09ef5f12f73e8e91a",
-      "transformation": "none"
-    },
-    {
-      "bytes": 5287,
-      "path": "docs/评测报告_提交版.md",
-      "sha256": "b99cf6f61a91fc7be958096bddfeac0050cc56b8faba8c207ead5e944f0e8379",
-      "source_sha256": "b99cf6f61a91fc7be958096bddfeac0050cc56b8faba8c207ead5e944f0e8379",
       "transformation": "none"
     },
     {
@@ -1898,10 +1877,10 @@
       "transformation": "none"
     },
     {
-      "bytes": 45158,
+      "bytes": 45041,
       "path": "scripts/build_source_bundle.py",
-      "sha256": "502445f6e0160ca13d2c984ef1cf6618e7a83021abf2070c843a212fe6546be3",
-      "source_sha256": "502445f6e0160ca13d2c984ef1cf6618e7a83021abf2070c843a212fe6546be3",
+      "sha256": "648faf7dd4b633478e38ee11d7ad1bffbf3d5f7b105d5f1a5c8961a128b98292",
+      "source_sha256": "648faf7dd4b633478e38ee11d7ad1bffbf3d5f7b105d5f1a5c8961a128b98292",
       "transformation": "none"
     },
     {
@@ -2385,7 +2364,7 @@
   "publication_status": "local_review_bundle",
   "publication_target": "https://github.com/yinyinglv0-lab/pharma-cost-workbench",
   "scan": {
-    "files_scanned": 284,
+    "files_scanned": 281,
     "format": "UTF-8 text plus exact-hash reviewed PNG wordmark",
     "high_confidence_findings": [],
     "limitation": "Pattern/allowlist checks are not a proof of no secrets and do not grant distribution rights.",
@@ -2689,7 +2668,7 @@
   },
   "schema": "project4-source-bundle/1.0",
   "scope": "literal source-only allowlist; excluded directories never enumerated or read",
-  "source_tree_sha256": "090cbe26b5f17b4786ed98161700ae7b844e381e9e2c5ca4c6e8e5d9b242032f",
+  "source_tree_sha256": "c40319f1f4a3f1a0dce74caff5718e3562db817883416fffe211891b91823ecd",
   "third_party": {
     "echarts_sha256": "e84270bd0cd5bdf60fefc26d00c2a391cb2e81f4d26a7a9ee16185a54773a3cf",
     "echarts_version": "5.5.1",
