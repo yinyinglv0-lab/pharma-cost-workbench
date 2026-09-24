@@ -1,0 +1,38 @@
+{
+  "schema_version": "manufacturing-adapter/1",
+  "id": "auto-parts-starter",
+  "version": "1.0.0",
+  "industry": "auto_parts",
+  "label": "汽车零部件列映射模板（未接入真实企业数据）",
+  "status": "template",
+  "columns": {
+    "factory": "生产基地",
+    "product": "零件号",
+    "specification": "图纸版本",
+    "month": "成本月份",
+    "material": "单位材料成本",
+    "labor": "单位人工成本",
+    "overhead": "单位制造间接费",
+    "unitcost": "单位完全成本",
+    "output": "合格完工量",
+    "total": "完工总成本"
+  },
+  "currency": {
+    "source_column": "成本币种",
+    "target": "CNY",
+    "rates": [{"source": "CNY", "factor": "1"}]
+  },
+  "units": {
+    "quantity_column": "完工计量单位",
+    "cost_denominator_column": "成本计量单位",
+    "conversions": [{"source": "piece", "target": "piece", "factor": "1"}]
+  },
+  "factories": [],
+  "product_units": [],
+  "limitations": [
+    "仅为候选源列名模板；未声明任何真实基地、零件、客户、产量或成本。",
+    "须人工确认零件号与图纸版本、质量口径、工厂及成本单位；本模板不可直接处理数据。",
+    "套件、成对件与单件换算、返工报废、模具摊销及采购价格需可追溯业务规则，不能隐式推算。",
+    "法规与客户质量要求须另建已批准知识包；本配置不证明符合任何标准。"
+  ]
+}

@@ -22,7 +22,11 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description='Register reviewed official knowledge sources')
     parser.add_argument('--source', type=Path)
     parser.add_argument('--root', type=Path)
-    parser.add_argument('--dense', action='store_true', help='Build embeddings with installed local BGE weights')
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument('--dense', dest='dense', action='store_true', default=True,
+                      help='Require local BGE embeddings (default; contest compliant hybrid)')
+    mode.add_argument('--lexical-diagnostic-only', dest='dense', action='store_false',
+                      help='Explicit noncompliant diagnostic release; formal model analysis will refuse it')
     parser.add_argument('--catalog-only', action='store_true')
     parser.add_argument('--build-timeout', type=_build_timeout, default=600.0,
                         help='Explicit offline publication deadline in seconds (0 < seconds <= 3600; default: 600)')

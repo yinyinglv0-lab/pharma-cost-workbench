@@ -1,0 +1,28 @@
+{
+  "schema_version": "manufacturing-example/1",
+  "industry": "pharma",
+  "status": "active",
+  "data_classification": "simulation",
+  "label": "SIMULATION pharmaceutical fourth and fifth tablet fixture bundle",
+  "currency": "CNY",
+  "reporting_unit": "tablet",
+  "periods": ["2026-05", "2026-06"],
+  "files": {
+    "domain": "domain.json",
+    "adapter": "adapter.json",
+    "actual": "actual.csv",
+    "budget": "budget.csv",
+    "materials": "materials.csv",
+    "labor": "labor.csv",
+    "overhead": "overhead.csv",
+    "knowledge": "knowledge.txt"
+  },
+  "limitations": [
+    "SIMULATION only: all identities, monetary values, quantities, reference ranges and vocabulary are synthetic, not production evidence.",
+    "This manifest is documentation only. The pure runtime does not load these filenames, paths or URLs; a caller supplies parsed tables and hashes of original CSV bytes.",
+    "The bundle contains two distinct products, both home/peer factories and both periods: 8 actual rows, 8 budget rows, 16 material rows, 8 labor rows and 16 overhead rows.",
+    "CNY and tablet are explicit reporting measurements; same-currency and same-unit factors are 1. There is no inferred box conversion.",
+    "Reference BOM, process, equipment and yield ranges do not become actual quantity, yield, event or causal observations; source blanks stay unavailable.",
+    "Active describes valid fixture configuration only, not permission, approval, production readiness or authority to dispatch tasks."
+  ]
+}

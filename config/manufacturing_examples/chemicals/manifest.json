@@ -1,0 +1,28 @@
+{
+  "schema_version": "manufacturing-example/1",
+  "industry": "chemicals",
+  "status": "active",
+  "data_classification": "simulation",
+  "label": "SIMULATION Chemicals example bundle",
+  "currency": "CNY",
+  "reporting_unit": "kg",
+  "periods": ["2026-05", "2026-06"],
+  "files": {
+    "domain": "domain.json",
+    "adapter": "adapter.json",
+    "actual": "actual.csv",
+    "budget": "budget.csv",
+    "materials": "materials.csv",
+    "labor": "labor.csv",
+    "overhead": "overhead.csv",
+    "knowledge": "knowledge.txt"
+  },
+  "limitations": [
+    "SIMULATION only: all data, factories, products, SIM-prefixed specifications and reference ranges are synthetic and not researched claims.",
+    "This manifest is a documentation-only inventory. It is not runtime configuration, contains no runtime path settings and does not activate or import the bundle.",
+    "Active means the domain/2 and adapter/2 examples are schema-ready, not production approved or authorized.",
+    "BOM coefficients 0.9 and 1.2 are references only, never actual material quantities. The second material row intentionally omits quantity, quantity_unit and unit_price.",
+    "Each product independently uses the same undoubled base costs over both factories and both months; summary counts are 8 actual and 8 budget rows, with 16 material, 8 labor and 16 overhead rows.",
+    "Process/equipment links and yield references are context only, not actual events or verified cost causes. CNY and kg identity conversions are the only configured conversions."
+  ]
+}

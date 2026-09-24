@@ -103,6 +103,31 @@ def scope_permits(version, scope, *, product=None, factory=None):
     """
     if not scope.get('products') or not scope.get('factories'):
         return False
+    metadata = version.get('business_metadata') or {}
+    if not isinstance(metadata, dict):
+        return False
+    if 'manufacturing_domain_profile' in metadata:
+        # The complete frozen profile (including other products' BOMs) is
+        # returned as metadata. A one-product document scope cannot declassify
+        # that aggregate, including on a document labelled public.
+        try:
+            from enterprise.domain_profiles import validate_domain_profile, profile_fingerprint
+            from enterprise.domain_vocabulary import build_graph_vocabulary, validate_graph_vocabulary
+            profile = validate_domain_profile(metadata['manufacturing_domain_profile'])
+            if profile.get('schema_version') != 'manufacturing-domain/2':
+                return False
+            fingerprint = profile_fingerprint(profile)
+            if metadata.get('manufacturing_profile_sha256', fingerprint) != fingerprint:
+                return False
+            if validate_graph_vocabulary(metadata.get('graph_vocabulary')) != build_graph_vocabulary(profile):
+                return False
+            whole_profile = {'products': {row['name'] for row in profile['products']},
+                             'factories': set(profile['factories'].values())}
+            for key, values in whole_profile.items():
+                if not values or ('*' not in scope[key] and not values <= set(scope[key])):
+                    return False
+        except (ValueError, TypeError, KeyError, AttributeError, RecursionError):
+            return False
     if version.get('visibility') == 'public':
         return True
     if version.get('visibility') != 'scoped':
@@ -215,6 +240,22 @@ def preview_file(content: bytes, filename: str):
                 with zipfile.ZipFile(io.BytesIO(content)) as archive:
                     if sum(x.file_size for x in archive.infolist()) > 100 * 1024 * 1024:
                         raise KnowledgeError('DOCX解压内容过大，拒绝解析')
+                    # Inspect package XML only; never resolve linked pictures or
+                    # render drawings/SmartArt. Include headers and footers too.
+                    from xml.etree import ElementTree
+                    drawing_tags = {'{http://schemas.openxmlformats.org/wordprocessingml/2006/main}' + name
+                                    for name in ('drawing', 'pict', 'object')}
+                    drawing_count = 0
+                    for name in archive.namelist():
+                        if name.startswith('word/') and name.endswith('.xml'):
+                            root = ElementTree.fromstring(archive.read(name))
+                            drawing_count += sum(element.tag in drawing_tags for element in root.iter())
+                    result['metadata']['coverage'] = {
+                        'method': 'text_only', 'ocr_performed': False,
+                        'drawing_count': drawing_count, 'manual_review_required': bool(drawing_count)}
+                    result['metadata']['warnings'] = ([
+                        'DOCX含图片、绘图或嵌入对象；仅抽取正文段落和表格文本，未执行OCR或流程图结构识别，须人工核对原件并确认遗漏内容。'
+                    ] if drawing_count else [])
                 from docx import Document
                 from docx.table import Table
                 from docx.text.paragraph import Paragraph
@@ -241,12 +282,56 @@ def preview_file(content: bytes, filename: str):
             document = PdfReader(io.BytesIO(content))
             if document.is_encrypted and not document.decrypt(''):
                 raise KnowledgeError('PDF已加密，请先解除密码保护')
-            pages = [page.extract_text() or '' for page in document.pages]
+            pages, image_pages, unchecked_pages = [], [], []
+            for number, page in enumerate(document.pages, 1):
+                pages.append(page.extract_text() or '')
+                try:
+                    # Inspect local PDF objects/operators without image decoding,
+                    # rasterization, OCR, URL resolution or executing PDF actions.
+                    from pypdf.generic import ContentStream
+                    pending, visited, has_image = [page], set(), False
+                    while pending:
+                        obj = pending.pop().get_object()
+                        if id(obj) in visited:
+                            continue
+                        visited.add(id(obj))
+                        if len(visited) > 10000:
+                            raise ValueError('PDF image coverage traversal limit')
+                        if obj.get('/Subtype') == '/Image':
+                            has_image = True
+                            break
+                        stream = (obj.get_contents() if obj is page else
+                                  ContentStream(obj, document) if obj.get('/Subtype') == '/Form' else None)
+                        if stream is not None and any(operator == b'INLINE IMAGE' for _, operator in stream.operations):
+                            has_image = True
+                            break
+                        resources = obj.get('/Resources')
+                        if resources is not None:
+                            objects = resources.get_object().get('/XObject')
+                            if objects is not None:
+                                pending.extend(objects.get_object().values())
+                    if has_image:
+                        image_pages.append(number)
+                except Exception:
+                    # Coverage uncertainty must be visible, not silently claimed
+                    # as a complete parse or allowed to hide extractable text.
+                    unchecked_pages.append(number)
+            missing_text = [i for i, page in enumerate(pages, 1) if not page.strip()]
+            warnings = []
+            if image_pages:
+                warnings.append('PDF含图片；仅抽取文本层，图像及图像流程图未执行OCR或结构识别，须人工核对原件并确认遗漏内容。')
+            if missing_text:
+                warnings.append('PDF部分页面没有可提取文本（可能为空白页或扫描页）；须人工核对原件，不代表这些页面已完成解析。')
+            if unchecked_pages:
+                warnings.append('PDF部分页面的图片覆盖检查未完成；当前仅抽取文本，须人工核对原件，不应视为完整解析。')
+            result['metadata'].update(page_count=len(pages), warnings=warnings, coverage={
+                'method': 'text_only', 'ocr_performed': False, 'image_pages': image_pages,
+                'pages_without_text': missing_text, 'image_check_incomplete_pages': unchecked_pages,
+                'manual_review_required': bool(warnings)})
             result['parser'] = 'pypdf'
             if not any(page.strip() for page in pages):
                 raise KnowledgeError('PDF没有可提取文本，扫描件请先完成OCR后再登记')
             text = '\n\n'.join(f'[第{i}页]\n{page}' for i, page in enumerate(pages, 1))
-            result['metadata']['page_count'] = len(pages)
         text = _normalize(text)
         if not text.strip():
             raise KnowledgeError('未解析出正文，不能登记空知识版本')
@@ -302,6 +387,59 @@ def business_metadata(version):
 
 def canonical_json(value):
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(',', ':'), allow_nan=False)
+
+
+def _review_graph_metadata(metadata, *, principal, actor=None, confirming=False):
+    """Validate only the additive controlled fields; legacy metadata is retained.
+
+    Vocabulary supplies matching names, never document/product/factory grants.
+    A self-asserted reviewer in uploaded JSON is not a trusted review identity.
+    """
+    if not ({'graph_vocabulary', 'graph_vocabulary_review', 'manufacturing_domain_profile'} & set(metadata)):
+        return metadata
+    from enterprise.domain_vocabulary import validate_graph_vocabulary, build_graph_vocabulary
+    require_principal(principal, write=True)
+    if 'graph_vocabulary' not in metadata:
+        raise KnowledgeError('graph_vocabulary_review缺少词表')
+    try:
+        vocabulary = validate_graph_vocabulary(metadata['graph_vocabulary'])
+        if 'manufacturing_domain_profile' in metadata:
+            from enterprise.domain_profiles import validate_domain_profile, profile_fingerprint
+            profile = validate_domain_profile(metadata['manufacturing_domain_profile'])
+            if profile.get('schema_version') != 'manufacturing-domain/2':
+                raise ValueError('manufacturing_domain_profile需要已验证manufacturing-domain/2')
+            fingerprint = profile_fingerprint(profile)
+            if vocabulary['source_config_fingerprint'] != fingerprint:
+                raise ValueError('graph_vocabulary与manufacturing_domain_profile配置fingerprint不一致')
+            if vocabulary != build_graph_vocabulary(profile):
+                raise ValueError('graph_vocabulary须为manufacturing_domain_profile的受控投影')
+            if metadata.get('manufacturing_profile_sha256', fingerprint) != fingerprint:
+                raise ValueError('manufacturing_profile_sha256与已验证行业配置不一致')
+            # Installation hash includes the adapter, which this catalog does
+            # not attest or execute. Validate syntax, not false equivalence.
+            if 'manufacturing_config_hash' in metadata and (
+                    not isinstance(metadata['manufacturing_config_hash'], str)
+                    or not re.fullmatch(r'[0-9a-f]{64}', metadata['manufacturing_config_hash'])):
+                raise ValueError('manufacturing_config_hash须为SHA256')
+            metadata = {**metadata, 'manufacturing_domain_profile': profile,
+                        'manufacturing_profile_sha256': fingerprint}
+    except (ValueError, TypeError, KeyError) as exc:
+        raise KnowledgeError(str(exc)) from None
+    review = metadata.get('graph_vocabulary_review')
+    if (not isinstance(review, dict) or set(review) - {'reason', 'reviewed_by', 'reviewed_at'}
+            or not isinstance(review.get('reason'), str) or not review['reason'].strip()
+            or len(review['reason']) > 1000 or any(ord(c) < 32 for c in review['reason'])):
+        raise KnowledgeError('graph_vocabulary_review须包含有界人工复核原因')
+    reviewer = actor if confirming else principal.user_id
+    if review.get('reviewed_by', reviewer) != reviewer:
+        raise KnowledgeError('词表复核身份必须来自已认证登记者，不能由metadata指定')
+    if confirming:
+        if not review.get('reviewed_at') or review.get('reviewed_by') != reviewer:
+            raise KnowledgeError('词表缺少已认证登记复核记录')
+        normalize_known_at(review['reviewed_at'])
+        return metadata
+    return {**metadata, 'graph_vocabulary': vocabulary, 'graph_vocabulary_review': {
+        'reason': review['reason'].strip(), 'reviewed_by': reviewer, 'reviewed_at': _now()}}
 
 
 class Repository:
@@ -385,16 +523,22 @@ class Repository:
     @guarded_write
     def stage(self, content: bytes, filename, title, scope_products, effective_from, category, actor,
               doc_id=None, effective_to=None, *, scope_factories=None, visibility=None,
-              metadata=None, principal=None):
+              metadata=None, principal=None, extracted_text_override=None):
         principal = self._principal(principal)
         if principal is not None:
             require_principal(principal, write=True)
             if 'knowledge_admin' not in principal.roles:
                 raise KnowledgeAccessError('知识登记预览需要knowledge_admin角色')
             actor = principal.user_id
+        if extracted_text_override is not None:
+            if not isinstance(extracted_text_override, str) or not extracted_text_override.strip():
+                raise KnowledgeError('视觉增强正文须为非空文本')
+            if len(extracted_text_override) > 2 * 1024 * 1024:
+                raise KnowledgeError('视觉增强正文超过2MB，请分段登记')
         # A binary duplicate reuses the parse, not the logical document identity.
+        # 带视觉增强稿时不复用旧解析结果（正文不同）。
         known = None
-        if isinstance(content, bytes) and 0 < len(content) <= MAX_BYTES:
+        if extracted_text_override is None and isinstance(content, bytes) and 0 < len(content) <= MAX_BYTES:
             try:
                 clean = _name(filename)
                 if Path(clean).suffix.lower() in SUPPORTED:
@@ -408,6 +552,24 @@ class Repository:
                       'parser': previous['parser'], 'metadata': previous['parse_metadata']}
         else:
             parsed = preview_file(content, filename)
+        if extracted_text_override is not None:
+            if parsed['errors']:
+                # 视觉增强稿可替代不可提取/解析失败的文本层（如纯扫描PDF）；原件仍按原文件保存
+                parsed = {'filename': _name(filename), 'text': extracted_text_override,
+                          'sha256': hashlib.sha256(content).hexdigest(),
+                          'text_sha256': hashlib.sha256(extracted_text_override.encode('utf-8')).hexdigest(),
+                          'errors': [], 'format': Path(_name(filename)).suffix.lower().lstrip('.'),
+                          'parser': 'vision_enhanced_pypdf',
+                          'metadata': {'vision_enhanced': True,
+                                       'preview_errors': [str(item)[:200] for item in parsed['errors']]}}
+            else:
+                parsed = dict(parsed)
+                parsed['metadata'] = dict(parsed.get('metadata') or {})
+                parsed['metadata'].update({'vision_enhanced': True,
+                                           'vision_disclaimer': '含视觉模型增强解析内容，未经人工核对不得作为正式依据'})
+                parsed['text'] = extracted_text_override
+                parsed['text_sha256'] = hashlib.sha256(extracted_text_override.encode('utf-8')).hexdigest()
+                parsed['parser'] = 'vision_enhanced_pypdf'
         result = {'stage_id': None, 'doc_id': doc_id, 'base_version': 0, 'change': {},
                   'text': parsed['text'], 'diff': '', 'errors': list(parsed['errors']),
                   'filename': parsed['filename'], 'sha256': parsed['sha256'],
@@ -437,6 +599,7 @@ class Repository:
                 metadata = json.loads(canonical_json(metadata))
             except (ValueError, TypeError):
                 raise KnowledgeError('业务metadata须为可序列化JSON对象') from None
+            metadata = _review_graph_metadata(metadata, principal=principal)
             effective_from = _date(effective_from, '生效日期')
             effective_to = _date(effective_to, '失效日期') if effective_to else None
             if effective_to and effective_to < effective_from:
@@ -469,6 +632,16 @@ class Repository:
                 result['base_version'] = base['version']
                 if title != base['title']:
                     raise KnowledgeError('更新必须保留文档标题；请选择正确的已有文档')
+            if comparison and 'graph_vocabulary' in metadata:
+                old_business = comparison.get('business_metadata') or {}
+                old_review = old_business.get('graph_vocabulary_review') or {}
+                new_review = metadata['graph_vocabulary_review']
+                if (old_business.get('graph_vocabulary') == metadata['graph_vocabulary']
+                        and all(old_review.get(key) == new_review.get(key) for key in ('reason', 'reviewed_by'))
+                        and old_review.get('reviewed_at')):
+                    # Reuse only a persisted, authenticated prior stamp for an
+                    # unchanged review; request timestamps never create no-ops.
+                    new_review['reviewed_at'] = old_review['reviewed_at']
             if comparison and parsed['text_sha256'] == comparison['text_sha256'] and business_metadata(comparison) == proposed:
                 kind = 'binary_duplicate' if parsed['sha256'] == comparison['sha256'] else 'text_duplicate'
                 result['change'] = {'kind': kind, 'requires_confirmation': False,
@@ -506,6 +679,43 @@ class Repository:
         except KnowledgeError as exc:
             result['errors'].append(str(exc))
         return result
+
+    def pending_stages(self):
+        """列出全部待确认暂存（含系统自动生成的案例候选），供知识管理员核对确认。"""
+        conn = self._connect()
+        if conn is None:
+            return []
+        try:
+            rows = []
+            for row in conn.execute(
+                    "SELECT stage_id, doc_id, payload, created_at, actor FROM stages "
+                    "WHERE status='pending' ORDER BY created_at"):
+                payload = json.loads(row['payload'])
+                rows.append({'stage_id': row['stage_id'], 'doc_id': row['doc_id'],
+                             'title': payload.get('title'), 'category': payload.get('category'),
+                             'created_at': row['created_at'], 'actor': row['actor'],
+                             'text': payload.get('text', ''),
+                             'scope_products': payload.get('scope_products', []),
+                             'scope_factories': payload.get('scope_factories', []),
+                             'visibility': payload.get('visibility', 'unknown')})
+            return rows
+        finally:
+            conn.close()
+
+    def pending_case_stage(self, task_id, closure_revision):
+        """查找同任务同闭环修订的待确认异常案例暂存（只读，供自动暂存幂等检查）。"""
+        conn = self._connect()
+        if conn is None:
+            return None
+        try:
+            row = conn.execute(
+                "SELECT stage_id, doc_id FROM stages WHERE status='pending' "
+                "AND json_extract(payload,'$.business_metadata.task_id')=? "
+                "AND json_extract(payload,'$.business_metadata.closure_revision')=? "
+                "ORDER BY created_at DESC LIMIT 1", (str(task_id), int(closure_revision))).fetchone()
+            return {'stage_id': row['stage_id'], 'doc_id': row['doc_id']} if row else None
+        finally:
+            conn.close()
 
     @guarded_write
     def stage_scope_review(self, doc_id, *, expected_version_id, expected_sha256, principal=None,
@@ -596,6 +806,8 @@ class Repository:
                 raise KnowledgeError('该预览已结束，请重新生成预览')
             if stage['payload_sha256'] and hashlib.sha256(stage['payload'].encode('utf-8')).hexdigest() != stage['payload_sha256']:
                 raise KnowledgeError('暂存正文或metadata校验失败，已拒绝确认')
+            _review_graph_metadata(payload['business_metadata'], principal=principal,
+                                   actor=stage['actor'], confirming=True)
             document = conn.execute('SELECT * FROM documents WHERE doc_id=?', (stage['doc_id'],)).fetchone()
             head = document['head_version'] if document else 0
             if head != stage['base_version']:

@@ -25,7 +25,25 @@ from enterprise.knowledge import VersionConflict
 from enterprise.operations import MaintenanceError
 from paths import MANAGED_DIR
 
-app = FastAPI(title='制药企业成本智能分析系统 API', version='2.0.0')
+from contextlib import asynccontextmanager
+_STARTUP_KNOWLEDGE = {'ready': False, 'state': 'not_started'}
+
+
+@asynccontextmanager
+async def lifespan(application):
+    global _STARTUP_KNOWLEDGE
+    try:
+        from enterprise.security import worker_principal
+        from enterprise.knowledge_runtime import begin_warmup
+        _STARTUP_KNOWLEDGE = begin_warmup(worker_principal())
+    except PermissionError as exc:
+        _STARTUP_KNOWLEDGE = {'ready': False, 'state': 'startup_identity_unavailable', 'error_type': type(exc).__name__}
+    yield
+
+
+app = FastAPI(title='制药企业成本智能分析系统 API', version='2.0.0', lifespan=lifespan)
+from enterprise.manufacturing_api import create_manufacturing_router
+app.include_router(create_manufacturing_router(lambda: MANAGED_DIR))
 origins = [x.strip() for x in os.environ.get('COST_CORS_ORIGINS', '').split(',') if x.strip()]
 if origins:
     app.add_middleware(CORSMiddleware, allow_origins=origins,
@@ -40,8 +58,9 @@ from threading import Lock
 _HTTP_STATUS_COUNTS = Counter()
 _HTTP_METRICS_LOCK = Lock()
 _STARTED = time.monotonic()
-from enterprise.build_info import source_fingerprint
+from enterprise.build_info import deployment_fingerprint, source_fingerprint
 _BUILD_FINGERPRINT = source_fingerprint()
+_DEPLOYMENT_FINGERPRINT = deployment_fingerprint()
 
 
 @app.middleware('http')
@@ -84,7 +103,10 @@ def service(request):
     return Application(request.state.principal)
 
 
-def _scope_spec(d, product, specification=None):
+def _scope_spec(d, product, specification=None, *, factory=None):
+    if factory is not None:
+        d = {key: frame.loc[frame['工厂'].eq(factory)].copy()
+             if not frame.empty and '工厂' in frame else frame for key, frame in d.items()}
     frame = d.get('cost26')
     if frame is None or frame.empty or product not in set(frame['产品名称']):
         raise HTTPException(404, detail='产品不存在或无权访问')
@@ -113,6 +135,7 @@ class StrictModel(BaseModel):
 @app.get('/api/health')
 def health():
     return {'status': 'ok', 'version': '2.0.0', 'source_fingerprint': _BUILD_FINGERPRINT,
+            'deployment_fingerprint': _DEPLOYMENT_FINGERPRINT, 'deployment_fingerprint_schema': 'deployment-files/1.0',
             'validation': 'performed_per_authorized_request'}
 
 
@@ -127,7 +150,7 @@ def system_status(request: Request):
     return {'uptime_seconds': round(time.monotonic()-_STARTED), 'http_status_counts': counts,
             'scope': '当前API进程计数；重启归零',
             'operations': operations_metrics(data_root=DATA_DIR, managed_root=MANAGED_DIR),
-            'model': configuration().public()}
+            'model': configuration().public(), 'knowledge_startup': dict(_STARTUP_KNOWLEDGE)}
 
 
 @app.get('/api/me')
@@ -150,7 +173,7 @@ def api_months(request: Request):
 def api_dashboard(product: str, request: Request, specification: str | None = None):
     principal = request.state.principal
     require(principal, 'dashboard.read', factory='中药一厂', product=product)
-    tables = _scope_spec(service(request).tables(), product, specification)
+    tables = _scope_spec(service(request).tables(), product, specification, factory='中药一厂')
     return _disp_mapping(build_dashboard_data(product, tables))
 
 
@@ -176,9 +199,44 @@ def api_attribution(params: AttributionParams, request: Request):
     from attribution_gen import generate_attribution
     principal = request.state.principal
     require(principal, 'analysis.generate', factory='中药一厂', product=params.product)
-    tables = _scope_spec(service(request).tables(), params.product, params.specification)
+    tables = _scope_spec(service(request).tables(), params.product, params.specification, factory='中药一厂')
     return generate_attribution(params.product, params.month, use_llm=params.use_llm, d=tables,
-                                principal=principal, root=MANAGED_DIR)
+                                principal=principal, root=MANAGED_DIR, require_hybrid=True)
+
+
+class AgentContext(StrictModel):
+    factory: str | None = Field(default=None, max_length=80)
+    product: str | None = Field(default=None, max_length=120)
+    specification: str | None = Field(default=None, max_length=120)
+    month: str | None = Field(default=None, pattern=r'^\d{4}-(0[1-9]|1[0-2])$')
+    theme: str | None = Field(default=None, max_length=80)
+    method: str | None = Field(default=None, pattern=r'^(naive|ma3)$')
+
+
+class AgentParams(StrictModel):
+    message: str = Field(min_length=1, max_length=1000)
+    context: AgentContext | None = None
+
+
+@app.post('/api/agent/query')
+def api_agent_query(params: AgentParams, request: Request):
+    from enterprise.agent_router import execute_request
+    context = params.context.model_dump(exclude_none=True) if params.context else None
+    result = execute_request(service(request), params.message, context)
+    return JSONResponse(result, status_code=503) if result['status'] == 'failed' else result
+
+
+class ForecastParams(StrictModel):
+    factory: str = Field(min_length=1, max_length=80)
+    product: str = Field(min_length=1, max_length=120)
+    specification: str = Field(min_length=1, max_length=120)
+    cutoff_month: str = Field(pattern=r'^\d{4}-(0[1-9]|1[0-2])$')
+    method: str = Field(default='naive', pattern=r'^(naive|ma3)$')
+
+
+@app.post('/api/forecast')
+def api_forecast(params: ForecastParams, request: Request):
+    return service(request).forecast(**params.model_dump())
 
 
 class SearchParams(StrictModel):
@@ -189,6 +247,13 @@ class SearchParams(StrictModel):
     factory: str | None = None
     as_of: str = Field(default_factory=lambda: date.today().isoformat())
     known_at: str | None = None
+    require_ready: bool = False
+
+
+@app.get('/api/search/readiness')
+def api_search_readiness(request: Request):
+    from enterprise.knowledge_runtime import readiness
+    return readiness(request.state.principal, repository=service(request).knowledge())
 
 
 @app.post('/api/search')
@@ -198,9 +263,21 @@ def api_search(params: SearchParams, request: Request):
     require(principal, 'knowledge.read', product=params.product, factory=params.factory)
     if params.mode != 'formal':
         raise HTTPException(422, detail='受控检索仅提供正式发布资料，模拟案例不进入候选')
-    rows, stats = get_search_engine(repository=service(request).knowledge()).search(
+    engine = get_search_engine(repository=service(request).knowledge())
+    if params.require_ready:
+        state = engine.readiness(principal=principal, wait=False, require_hybrid=True)
+        if not state['ready']:
+            return JSONResponse({'query':params.query, 'results':[], 'stats':{
+                'reason':'retrieval_not_ready', 'no_answer':True, 'readiness':state}},
+                status_code=503, headers={'Retry-After':'3'})
+    rows, stats = engine.search(
         params.query, principal=principal, product=params.product, factory=params.factory,
-        as_of=params.as_of, known_at=params.known_at, top_k=params.top_k)
+        as_of=params.as_of, known_at=params.known_at, top_k=params.top_k,
+        require_ready=params.require_ready, ready_timeout=0 if params.require_ready else None,
+        require_hybrid=True, vector_timeout=15.0)
+    if stats.get('reason') in {'retrieval_not_ready', 'hybrid_unavailable'}:
+        return JSONResponse({'query': params.query, 'results': [], 'stats': stats},
+                            status_code=503, headers={'Retry-After': '3'})
     return {'query': params.query,
             'results': [{**row, 'source': row['meta']['filename']} for row in rows], 'stats': stats}
 
@@ -228,9 +305,10 @@ def create_report(params, request):
     raw = params.model_dump(exclude={'format'})
     raw['specification'] = specification
     months = resolve_period(params.theme, params.month)[0]
-    evidence = report_evidence(principal, params.product, specification, months, MANAGED_DIR)
-    configured = configuration()
-    payload = build_report_payload(raw, tables, evidence=evidence,
+    configured = configuration(task='report')
+    payload = build_report_payload(raw, tables,
+        evidence_fn=lambda facts: report_evidence(principal, params.product, specification, months,
+                                                  MANAGED_DIR, facts=facts, require_hybrid=params.use_llm),
         model_fn=validated_model if params.use_llm and configured.api_key else None,
         model_version=configured.model if configured.api_key else 'not_configured',
         versions={'cost_revision': tables['cost26'].attrs.get('cost_revision'),
@@ -241,9 +319,11 @@ def create_report(params, request):
 def report_download(record, format, principal):
     from enterprise.report_records import ReportRepository
     content = ReportRepository(MANAGED_DIR).export(record['id'], format, actor=principal)
-    mime = 'application/pdf' if format == 'pdf' else 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+    mime = {'pdf': 'application/pdf', 'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            'audit_json': 'application/json'}.get(format, 'application/octet-stream')
+    extension = 'audit.json' if format == 'audit_json' else format
     return Response(content=content, media_type=mime, headers={
-        'Content-Disposition': f'attachment; filename="{record["id"]}.{format}"',
+        'Content-Disposition': f'attachment; filename="{record["id"]}.{extension}"',
         'X-Report-ID': record['id'], 'X-Review-Status': record['status']})
 
 
@@ -342,8 +422,12 @@ def api_benchmark(params: BenchmarkParams, request: Request):
     for factory in ('中药一厂', '中药二厂'):
         require(principal, 'analysis.generate', factory=factory, product=params.product)
     tables = service(request).tables()
-    evidence = report_evidence(principal, params.product, params.specification, [params.month], MANAGED_DIR)
-    cfg = configuration()
+    from enterprise.benchmark import build_benchmark
+    from enterprise.analysis_service import benchmark_retrieval_facts
+    facts = build_benchmark(params.product, params.specification, params.month, tables)
+    evidence = report_evidence(principal, params.product, params.specification, [params.month], MANAGED_DIR,
+                               facts=benchmark_retrieval_facts(facts), require_hybrid=True)
+    cfg = configuration(task='benchmark')
     return generate_benchmark_analysis(params.product, params.specification, params.month, tables,
         evidence=evidence, model_fn=validated_model if cfg.api_key and params.use_llm else None,
         model_version=cfg.model if cfg.api_key else 'not_configured', use_llm=params.use_llm)
@@ -386,6 +470,70 @@ class TaskEdit(StrictModel):
 def api_edit_task(ident: str, params: TaskEdit, request: Request):
     return service(request).tasks().update(ident, params.changes, actor=request.state.principal,
                                           expected_version=params.expected_version)
+
+
+class RectificationSubmission(StrictModel):
+    payload: dict
+    expected_version: int = Field(ge=1)
+    expected_closure_revision: int = Field(ge=0)
+
+
+class RectificationReview(StrictModel):
+    decision: str
+    comment: str = Field(min_length=1, max_length=4000)
+    expected_version: int = Field(ge=1)
+    expected_closure_revision: int = Field(ge=0)
+
+
+@app.get('/api/tasks/{ident}/rectifications')
+def api_rectification_history(ident: str, request: Request):
+    return service(request).tasks().rectifications(ident, actor=request.state.principal)
+
+
+@app.post('/api/tasks/{ident}/rectification')
+def api_submit_rectification(ident: str, params: RectificationSubmission, request: Request):
+    return service(request).tasks().submit_rectification(ident, params.payload, actor=request.state.principal,
+        expected_version=params.expected_version, expected_closure_revision=params.expected_closure_revision)
+
+
+@app.post('/api/tasks/{ident}/acceptance')
+def api_review_rectification(ident: str, params: RectificationReview, request: Request):
+    return service(request).tasks().review_rectification(ident, decision=params.decision, comment=params.comment,
+        actor=request.state.principal, expected_version=params.expected_version,
+        expected_closure_revision=params.expected_closure_revision)
+
+
+@app.get('/api/task-notifications')
+def api_task_notifications(request: Request, task_id: str | None = None, unread_only: bool = False,
+                           limit: int = 100, offset: int = 0):
+    if not 1 <= limit <= 100 or offset < 0:
+        raise HTTPException(422, detail='分页范围错误')
+    return {'notifications': service(request).tasks().notifications(actor=request.state.principal,
+        task_id=task_id, unread_only=unread_only, limit=limit, offset=offset)}
+
+
+@app.post('/api/task-notifications/{notification_id}/acknowledge')
+def api_acknowledge_task_notification(notification_id: str, request: Request):
+    return service(request).tasks().acknowledge_notification(notification_id, actor=request.state.principal)
+
+
+@app.post('/api/tasks/{ident}/reminders')
+def api_schedule_task_reminder(ident: str, request: Request):
+    return {'notifications': service(request).tasks().schedule_reminders(actor=request.state.principal, task_id=ident)}
+
+
+class ReminderDispatch(StrictModel):
+    limit: int = Field(default=10, ge=1, le=100)
+    task_id: str | None = None
+
+
+@app.post('/api/task-reminders/dispatch')
+def api_dispatch_task_reminders(params: ReminderDispatch, request: Request):
+    require(request.state.principal, 'task.remind')
+    from enterprise.rpa_client import RPAClient
+    with RPAClient() as client:
+        return {'results': service(request).tasks().dispatch_reminders(client, actor=request.state.principal,
+            limit=params.limit, task_id=params.task_id)}
 
 
 @app.post('/api/tasks/{ident}/{action}')

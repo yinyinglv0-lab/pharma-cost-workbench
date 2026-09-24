@@ -1,0 +1,40 @@
+{
+  "schema_version": "manufacturing-adapter/2",
+  "id": "simulation_machinery",
+  "version": "1.0.0",
+  "industry": "machinery",
+  "label": "SIMULATION Machinery Piece and CNY Adapter",
+  "status": "active",
+  "columns": {
+    "factory": "factory",
+    "product": "product",
+    "specification": "specification",
+    "month": "month",
+    "material": "material",
+    "labor": "labor",
+    "overhead": "overhead",
+    "unitcost": "unitcost",
+    "output": "output",
+    "total": "total"
+  },
+  "currency": {
+    "source_column": "currency",
+    "target": "CNY",
+    "rates": [{"source": "CNY", "factor": "1"}]
+  },
+  "units": {
+    "quantity_column": "quantity_unit",
+    "cost_denominator_column": "cost_denominator_unit",
+    "conversions": [{"source": "piece", "target": "piece", "factor": "1"}]
+  },
+  "factories": ["SIMULATION Machinery Home Factory", "SIMULATION Machinery Peer Factory"],
+  "product_units": [
+    {"product": "SIMULATION Centrifugal Pump", "specification": "SIM-PUMP-50", "unit": "piece"},
+    {"product": "SIMULATION Gear Housing", "specification": "SIM-HOUSING-80", "unit": "piece"}
+  ],
+  "limitations": [
+    "SIMULATION data only; exact product, specification and factory bindings are not authentication or authorization.",
+    "Only explicit CNY-to-CNY and piece-to-piece identity conversions are supported; no packaging or BOM conversion is implied.",
+    "Each product independently uses the same base costs without doubling; empty detail observations remain unavailable."
+  ]
+}

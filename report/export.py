@@ -64,7 +64,7 @@ def renderer_versions(font):
     from .model import RENDERER_VERSION
     return {"version": RENDERER_VERSION, "docx": "python-docx/" + _package("python-docx"),
             "pdf": "reportlab/" + _package("reportlab"), "charts": "matplotlib/" + _package("matplotlib"),
-            "font": font, "layout": "A4-six-sections/1.0"}
+            "font": font, "layout": "A4-readable-citations/3.0"}
 
 
 def _font_path(descriptor):
@@ -80,6 +80,8 @@ def make_charts(facts, font):
     from matplotlib.figure import Figure
     from matplotlib.backends.backend_agg import FigureCanvasAgg
     from matplotlib.font_manager import FontProperties
+    from matplotlib.ticker import StrMethodFormatter
+    from matplotlib.patches import Patch
     prop = FontProperties(fname=_font_path(font))
     charts = {}
     colors = ["#23678C", "#B57C42", "#358B80"]
@@ -102,15 +104,21 @@ def make_charts(facts, font):
         trend = facts["trend"]
         axis.plot([row["month"] for row in trend], [row.get("unit_cost", float("nan")) for row in trend],
                   marker="o", color=colors[0], linewidth=2)
-        axis.set_title("近六个月单位成本趋势（缺月保留断点）")
+        axis.set_title("近六个月单位成本趋势")
         axis.set_ylabel("元/盒")
+        for i, row in enumerate(trend):
+            if row.get('unit_cost') is not None:
+                axis.annotate(f"{row['unit_cost']:,.2f}", (i, row['unit_cost']), xytext=(0, 8),
+                              textcoords='offset points', ha='center', fontsize=9)
+        axis.yaxis.set_major_formatter(StrMethodFormatter('{x:,.2f}'))
+        axis.margins(y=.25)
         axis.grid(axis="y", alpha=.2)
-        save(figure, "trend", "单位成本趋势截至分析期末；未提供月份不插值。")
+        save(figure, "trend", "单位：元/盒。纵轴按数据范围展示，点值为实际单位成本；缺失月份不插值。")
         figure = Figure(figsize=(9, 3.58), dpi=120, constrained_layout=True)
         axis = figure.subplots()
         amounts = [row["amount"] for row in facts["elements"].values()]
         if sum(amounts) > 0:
-            axis.pie(amounts, labels=["材料", "人工", "制造费用"], colors=colors, autopct="%.1f%%", startangle=90,
+            axis.pie(amounts, labels=["直接材料", "直接人工", "制造费用"], colors=colors, autopct="%.1f%%", startangle=90,
                      textprops={"fontproperties": prop})
         else:
             axis.text(.5, .5, "本期三要素金额均为零，结构占比无定义", ha="center", va="center", transform=axis.transAxes)
@@ -135,11 +143,13 @@ def make_charts(facts, font):
             axis.bar(4, change["本月总成本"], color=colors[0])
             axis.set_xticks(range(5), ["完整前期", "材料变动", "人工变动", "制费变动", "本期"])
             axis.set_ylabel("元")
-            axis.ticklabel_format(axis="y", style="plain")
+            axis.yaxis.set_major_formatter(StrMethodFormatter('{x:,.0f}'))
+            axis.legend(handles=[Patch(facecolor=colors[0], label='总成本'), Patch(facecolor='#B86A4C', label='金额增加'),
+                                 Patch(facecolor=colors[2], label='金额减少')], prop=prop, loc='upper right', ncol=3, frameon=False)
             axis.grid(axis="y", alpha=.2)
-            axis.margins(y=.2)
-        axis.set_title("总成本金额桥接（含产量与单位成本共同影响）")
-        save(figure, "waterfall", "瀑布图直接使用统一金额变动合同；零净变动时仍保留抵消要素。")
+            axis.margins(y=.25)
+        axis.set_title("总成本金额桥接")
+        save(figure, "waterfall", "单位：元。变动额包含产量及单位成本影响；正负项目相抵时仍分别展示。")
     return charts
 
 
@@ -176,6 +186,23 @@ def _docx_font(run, size=10, bold=None, family="Microsoft YaHei"):
     fonts.set(qn("w:eastAsia"), family)
 
 
+def _bound_reading(payload):
+    """Only newly generated snapshots opt into changed styling; old replay is exact."""
+    return (payload.get('schema_version') == 'report-payload/2.1' and
+            (payload.get('generation', {}).get('single_factory', {}).get('reading_style') == 'bound-prose-reading/1'
+             or any(section.get('reading_style') == 'contextual-reading/1.4'
+                    for section in payload.get('sections', []))))
+
+
+def _advice_parts(text):
+    """Split a reading paragraph without changing its visible original wording."""
+    marker = text.find('建议')
+    allowed = ('建议', '已校验补充建议：', '已采用模型建议（原文）：', '当前可执行：建议')
+    if marker < 0 or not text.startswith(allowed):
+        return None
+    return text[:marker], text[marker + 2:]
+
+
 def render_docx(payload):
     from docx import Document
     from docx.oxml import OxmlElement
@@ -183,7 +210,10 @@ def render_docx(payload):
     from docx.shared import Cm, Pt, RGBColor
     from .model import verify_payload
     verify_payload(payload)
+    modern = payload['versions']['renderer']['version'] == 'shared-docx-reportlab/3.0'
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
     family = payload["versions"]["renderer"]["font"]["family"]
+    bound_reading = _bound_reading(payload)
     def apply_font(run, size=10, bold=None):
         _docx_font(run, size, bold, family=family)
     doc = Document(io.BytesIO(base64.b64decode(payload["template_base64"])))
@@ -192,6 +222,17 @@ def render_docx(payload):
         if name not in doc.styles:
             style = doc.styles.add_style(name, kind)
             style.base_style = doc.styles["Normal" if kind == WD_STYLE_TYPE.PARAGRAPH else "Normal Table"]
+    # The competition DOCX uses direct outline formatting for its third level,
+    # and does not necessarily define Word's built-in Heading 3 style.
+    required_levels = {block.get('level', 1) for block in payload['blocks'] if block['kind'] == 'heading'}
+    for level in sorted(required_levels):
+        name = f'Heading {level}'
+        if name not in doc.styles:
+            style = doc.styles.add_style(name, WD_STYLE_TYPE.PARAGRAPH)
+            style.base_style = doc.styles['Normal']
+            outline = OxmlElement('w:outlineLvl')
+            outline.set(qn('w:val'), str(level - 1))
+            style.element.get_or_add_pPr().append(outline)
     # Retain the template package/styles, replacing its generic solution preface
     # and empty distribution lists with the frozen business report sections.
     for child in list(doc._element.body):
@@ -226,14 +267,27 @@ def render_docx(payload):
             paragraph.paragraph_format.keep_with_next = True
             for run in paragraph.runs:
                 apply_font(run, 20 if kind == "title" else 14 if block.get("level", 1) == 1 else 11, True)
-                run.font.color.rgb = RGBColor.from_string("235675")
+                run.font.color.rgb = RGBColor.from_string('0B0B0B' if bound_reading else '235675')
         elif kind == "paragraph":
             for line in block["text"].split("\n"):
-                paragraph = doc.add_paragraph(line)
+                advice = _advice_parts(line) if bound_reading else None
+                paragraph = doc.add_paragraph('' if advice else line)
+                if advice:
+                    paragraph.add_run(advice[0])
+                    label = paragraph.add_run('建议'); label.bold = True; label.font.color.rgb = RGBColor.from_string('2A78D6')
+                    paragraph.add_run(advice[1])
+                    border = OxmlElement('w:pBdr'); left = OxmlElement('w:left')
+                    for key, value in (('val', 'single'), ('sz', '12'), ('space', '4'), ('color', '2A78D6')):
+                        left.set(qn('w:' + key), value)
+                    border.append(left); paragraph._p.get_or_add_pPr().append(border)
+                    paragraph.paragraph_format.left_indent = Cm(.3)
                 paragraph.paragraph_format.space_after = Pt(6)
-                paragraph.paragraph_format.line_spacing = 1.18
+                paragraph.paragraph_format.line_spacing = 1.3 if modern else 1.18
+                if modern:
+                    paragraph.paragraph_format.widow_control = True
+                    paragraph.paragraph_format.keep_together = len(line) <= 360
                 for run in paragraph.runs:
-                    apply_font(run, 9 if line.startswith("来源定位：") else 10)
+                    apply_font(run, 10.5 if modern else 9 if line.startswith("来源定位：") else 10)
         elif kind == "table":
             headers = block["headers"]
             table = doc.add_table(rows=1, cols=len(headers))
@@ -259,14 +313,22 @@ def render_docx(payload):
             weights = block.get("column_weights", [1] * len(headers))
             for index, column in enumerate(table.columns):
                 column.width = Cm(18 * weights[index] / sum(weights))
-            for row in table.rows:
+            for row_index, row in enumerate(table.rows):
+                if modern:
+                    no_split = OxmlElement('w:cantSplit')
+                    row._tr.get_or_add_trPr().append(no_split)
                 for index, cell in enumerate(row.cells):
                     cell.width = Cm(18 * weights[index] / sum(weights))
                     for paragraph in cell.paragraphs:
                         paragraph.paragraph_format.space_after = Pt(3)
                         paragraph.paragraph_format.space_before = Pt(3)
+                        if modern:
+                            paragraph.alignment = WD_ALIGN_PARAGRAPH.RIGHT if index in block.get('numeric_columns', []) else WD_ALIGN_PARAGRAPH.LEFT
+                            paragraph.paragraph_format.keep_together = True
+                            paragraph.paragraph_format.keep_with_next = row_index == 0
                         for run in paragraph.runs:
-                            apply_font(run, 8 if len(headers) > 6 else 9)
+                            apply_font(run, 8.5 if modern and len(headers) > 6 else 9 if modern else 8 if len(headers) > 6 else 9,
+                                       bold=True if modern and row_index == 0 else None)
             if not block["rows"]:
                 doc.add_paragraph("无可用完整记录；见数据限制说明。")
             if block.get("note"):
@@ -280,9 +342,10 @@ def render_docx(payload):
             caption = doc.add_paragraph(block["caption"])
             for run in caption.runs:
                 apply_font(run, 9)
-    paragraph = doc.add_paragraph("冻结报告SHA256：" + payload["frozen_hash"])
-    for run in paragraph.runs:
-        apply_font(run, 8)
+    if not modern:
+        paragraph = doc.add_paragraph("冻结报告SHA256：" + payload["frozen_hash"])
+        for run in paragraph.runs:
+            apply_font(run, 8)
     doc.core_properties.title = payload["mapping"]["报告标题"]
     doc.core_properties.subject = "冻结报告 " + payload["frozen_hash"]
     doc.core_properties.author = "成本智能分析系统"
@@ -294,16 +357,18 @@ def render_docx(payload):
 
 def render_pdf(payload):
     from reportlab.lib import colors
-    from reportlab.lib.enums import TA_LEFT
+    from reportlab.lib.enums import TA_LEFT, TA_RIGHT
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.styles import ParagraphStyle
     from reportlab.lib.units import cm
     from reportlab.pdfbase import pdfmetrics
     from reportlab.pdfbase.ttfonts import TTFont
-    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, LongTable, TableStyle, Image, KeepTogether
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, LongTable, TableStyle, Image, KeepTogether, Flowable
     from .model import verify_payload
     verify_payload(payload)
+    modern = payload['versions']['renderer']['version'] == 'shared-docx-reportlab/3.0'
     descriptor = payload["versions"]["renderer"]["font"]
+    bound_reading = _bound_reading(payload)
     path = _font_path(descriptor)
     _check_glyphs(payload, path)
     font_name = "CJK-" + descriptor["sha256"][:12]
@@ -318,8 +383,59 @@ def render_pdf(payload):
             "cell": ParagraphStyle("ReportCell", fontName=font_name, fontSize=8, leading=12, wordWrap="CJK", splitLongWords=True),
             "small": ParagraphStyle("ReportSmall", fontName=font_name, fontSize=8, leading=12, spaceAfter=5, wordWrap="CJK", splitLongWords=True),
         }
+        if modern:
+            styles['body'].fontSize, styles['body'].leading = 10.5, 16.5
+            styles['body'].allowWidows, styles['body'].allowOrphans = 0, 0
+            styles['cell'].fontSize, styles['cell'].leading = 9, 13.5
+            styles['small'].fontSize, styles['small'].leading = 9, 13.5
+            styles['numeric'] = ParagraphStyle('ReportNumeric', parent=styles['cell'], alignment=TA_RIGHT, wordWrap=None, splitLongWords=False)
+            styles['header_cell'] = ParagraphStyle('ReportHeaderCell', parent=styles['cell'], textColor=colors.HexColor('#173F56'))
+        if bound_reading:
+            for style in ('title', 'heading', 'subheading'):
+                styles[style].textColor = colors.HexColor('#0B0B0B')
+            styles['advice'] = ParagraphStyle('BoundAdvice', parent=styles['body'], leftIndent=10)
+        class BoldParagraph(Paragraph):
+            def draw(self):
+                canvas, original = self.canv, self.canv.beginText
+                def begin(*args, **kwargs):
+                    obj = original(*args, **kwargs); obj.setTextRenderMode(2); return obj
+                canvas.saveState(); canvas.setLineWidth(.22); canvas.beginText = begin
+                try:
+                    return super().draw()
+                finally:
+                    canvas.beginText = original; canvas.restoreState()
+        class AdviceParagraph(Paragraph):
+            def draw(self):
+                canvas, original = self.canv, self.canv.beginText
+                def begin(*args, **kwargs):
+                    obj = original(*args, **kwargs); output = obj._textOut
+                    def emit(value, *a, **kw):
+                        obj.setTextRenderMode(2 if value == '建议' else 0)
+                        return output(value, *a, **kw)
+                    obj._textOut = emit; return obj
+                canvas.saveState(); canvas.setLineWidth(.22); canvas.beginText = begin
+                try:
+                    return super().draw()
+                finally:
+                    canvas.beginText = original; canvas.restoreState()
+        class Advice(Flowable):
+            def __init__(self, content):
+                Flowable.__init__(self); self.content = content
+            def wrap(self, width, height):
+                self.width, self.height = self.content.wrap(width - 4, height)
+                return width, self.height
+            def split(self, width, height):
+                return [Advice(part) for part in self.content.split(width - 4, height)]
+            def draw(self):
+                self.canv.setStrokeColor(colors.HexColor('#2A78D6')); self.canv.setLineWidth(1.5)
+                self.canv.line(0, 0, 0, self.height); self.content.drawOn(self.canv, 4, 0)
         def paragraph(text, style="body"):
-            return Paragraph(escape(str(text)).replace("\n", "<br/>"), styles[style])
+            parts = _advice_parts(str(text)) if bound_reading and style in ('body', 'cell') else None
+            if parts and style == 'body':
+                rendered = escape(parts[0]) + '<font color="#2A78D6">建议</font>' + escape(parts[1])
+                return Advice(AdviceParagraph(rendered.replace('\n', '<br/>'), styles['advice']))
+            cls = BoldParagraph if bound_reading and style in ('title', 'heading', 'subheading') else Paragraph
+            return cls(escape(str(text)).replace("\n", "<br/>"), styles[style])
         story = []
         width = A4[0] - 3 * cm
         for block in payload["blocks"]:
@@ -330,11 +446,13 @@ def render_pdf(payload):
             elif kind == "paragraph":
                 for line in block["text"].split("\n"):
                     style = "small" if line.startswith("来源定位：") else "body"
-                    story.append(paragraph(line, style))
+                    item = paragraph(line, style)
+                    story.append(item)
             elif kind == "table":
                 headers = block["headers"]
-                rows = [[paragraph(text, "cell") for text in headers]]
-                rows += [[paragraph(text, "cell") for text in row] for row in block["rows"]]
+                rows = [[paragraph(text, "header_cell" if modern else "cell") for text in headers]]
+                rows += [[paragraph(text, 'numeric' if modern and index in block.get('numeric_columns', []) else 'cell')
+                          for index, text in enumerate(row)] for row in block["rows"]]
                 weights = block.get("column_weights", [1] * len(headers))
                 table = LongTable(rows, colWidths=[width * weight / sum(weights) for weight in weights], repeatRows=1, hAlign="LEFT")
                 table.setStyle(TableStyle([
@@ -354,7 +472,8 @@ def render_pdf(payload):
             elif kind == "chart":
                 image = Image(io.BytesIO(_verify_chart(payload["charts"][block["name"]])), width=width, height=width * 430 / 1080)
                 story.append(KeepTogether([image, paragraph(block["caption"], "small")]))
-        story.append(paragraph("冻结报告SHA256：" + payload["frozen_hash"], "small"))
+        if not modern:
+            story.append(paragraph("冻结报告SHA256：" + payload["frozen_hash"], "small"))
         buffer = io.BytesIO()
         doc = SimpleDocTemplate(buffer, pagesize=A4, topMargin=1.8 * cm, bottomMargin=1.8 * cm,
                                 leftMargin=1.5 * cm, rightMargin=1.5 * cm,
@@ -366,7 +485,8 @@ def render_pdf(payload):
             canvas.setFillColor(colors.HexColor("#557184"))
             canvas.drawString(1.5 * cm, A4[1] - cm, "中药一厂 · 成本分析报告 · 内部")
             review_label = "已审核签发" if payload.get("review_status") == "approved" else "待审核"
-            canvas.drawString(1.5 * cm, cm, payload["report_id"] + "  |  " + review_label + "  |  " + payload["frozen_hash"][:12])
+            footer = payload["report_id"] + "  |  " + review_label
+            canvas.drawString(1.5 * cm, cm, footer if modern else footer + "  |  " + payload["frozen_hash"][:12])
             canvas.drawRightString(A4[0] - 1.5 * cm, cm, f"第 {document.page} 页")
             canvas.restoreState()
         doc.build(story, onFirstPage=chrome, onLaterPages=chrome)
@@ -379,4 +499,8 @@ def export_report(payload, format="docx"):
         return render_docx(payload)
     if format == "pdf":
         return render_pdf(payload)
-    raise ValueError("导出格式仅支持docx或pdf")
+    if format == 'audit_json':
+        import json
+        from .presentation import audit_metadata
+        return json.dumps(audit_metadata(payload), ensure_ascii=False, indent=2, allow_nan=False).encode('utf-8')
+    raise ValueError("导出格式仅支持docx、pdf或audit_json")

@@ -9,7 +9,7 @@ import streamlit as st
 
 _ASSETS = Path(__file__).resolve().parent.parent / "assets"
 _CACHE_DIR = Path(tempfile.gettempdir()) / "project4_chart_cache"
-TEMPLATE_VERSION = 3
+TEMPLATE_VERSION = 4
 _ECHARTS_JS = None
 
 
@@ -40,7 +40,7 @@ def _multi_chart_html(charts):
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><style>
 html, body {{ margin: 0; background: #ffffff; }}
 .grid {{ display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; padding: 4px; }}
-.chart {{ width: 100%; min-width: 0; min-height: 420px; }}
+.chart {{ width: 100%; min-width: 0; min-height: 400px; border: 1px solid #dfe6ef; border-radius: 8px; box-sizing: border-box; }}
 .full {{ grid-column: 1 / -1; }}
 @media (max-width: 700px) {{ .grid {{ grid-template-columns: minmax(0, 1fr); }} }}
 </style></head><body><div class="grid">{''.join(divs)}</div><script>

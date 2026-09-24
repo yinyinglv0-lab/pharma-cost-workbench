@@ -83,11 +83,12 @@ def main():
         reuse = False
         try:
             spec = json.loads(get('http://127.0.0.1:8000/openapi.json'))
-            from enterprise.build_info import source_fingerprint
+            from enterprise.build_info import deployment_fingerprint, source_fingerprint
             health = json.loads(get('http://127.0.0.1:8000/api/health'))
             reuse = (spec.get('info', {}).get('title') == '制药企业成本智能分析系统 API'
                      and spec.get('info', {}).get('version') == '2.0.0'
                      and health.get('source_fingerprint') == source_fingerprint()
+                     and health.get('deployment_fingerprint') == deployment_fingerprint()
                      and '/api/reports' in spec.get('paths', {}))
         except (OSError, ValueError):
             pass

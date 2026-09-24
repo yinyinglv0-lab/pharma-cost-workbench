@@ -1,0 +1,27 @@
+{
+  "schema_version": "manufacturing-example/1",
+  "industry": "machinery",
+  "status": "active",
+  "data_classification": "simulation",
+  "label": "SIMULATION Machinery Complete Two-Product Example",
+  "currency": "CNY",
+  "reporting_unit": "piece",
+  "periods": ["2026-05", "2026-06"],
+  "files": {
+    "domain": "domain.json",
+    "adapter": "adapter.json",
+    "actual": "actual.csv",
+    "budget": "budget.csv",
+    "materials": "materials.csv",
+    "labor": "labor.csv",
+    "overhead": "overhead.csv",
+    "knowledge": "knowledge.txt"
+  },
+  "limitations": [
+    "Documentation only: these conventional filenames are not a runtime loader or path configuration; the pure runtime accepts supplied table values and no paths.",
+    "All identities, values and reference knowledge are SIMULATION, not production observations or researched industry claims.",
+    "Each product independently uses the same base costs; actual and budget each contain 8 rows, materials and overhead each 16 rows, and labor 8 rows.",
+    "Reference BOM factors are not actual material usage; empty quantity and price cells remain unavailable.",
+    "Configuration grants no permissions and causes no real task dispatch; source digests alone are not proof of authenticity."
+  ]
+}

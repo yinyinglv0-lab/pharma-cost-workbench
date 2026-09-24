@@ -1,0 +1,38 @@
+{
+  "schema_version": "manufacturing-adapter/1",
+  "id": "electronics-starter",
+  "version": "1.0.0",
+  "industry": "electronics",
+  "label": "电子制造列映射模板（未接入真实企业数据）",
+  "status": "template",
+  "columns": {
+    "factory": "制造地点",
+    "product": "料号",
+    "specification": "工程版本",
+    "month": "核算期间",
+    "material": "单位物料成本",
+    "labor": "单位人工成本",
+    "overhead": "单位制造费用",
+    "unitcost": "单位制造成本",
+    "output": "生产数量",
+    "total": "制造总成本"
+  },
+  "currency": {
+    "source_column": "成本货币",
+    "target": "CNY",
+    "rates": [{"source": "CNY", "factor": "1"}]
+  },
+  "units": {
+    "quantity_column": "生产数量单位",
+    "cost_denominator_column": "成本单位",
+    "conversions": [{"source": "piece", "target": "piece", "factor": "1"}]
+  },
+  "factories": [],
+  "product_units": [],
+  "limitations": [
+    "仅提供候选字段和piece计量示例，不代表任何真实电子产品、料号、工厂或测量数据。",
+    "须确认工程版本、替代料、良率、返修报废及成本边界；适配器不从料号推断BOM。",
+    "板、模组、套件与单件不可自动换算；多币种须由服务端显式配置且不调用汇率网络。",
+    "质量、可靠性、环保和客户规范知识需经过适用性审查后独立发布。"
+  ]
+}

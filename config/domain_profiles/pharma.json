@@ -1,0 +1,30 @@
+{
+  "schema_version": "manufacturing-domain/1",
+  "id": "pharma",
+  "version": "1.0",
+  "label": "制药成本分析",
+  "source_dataset": "现有赛方模拟资料；不是其他行业实测数据",
+  "reporting_unit": "盒",
+  "currency": "CNY",
+  "factories": {"home": "中药一厂", "peer": "中药二厂"},
+  "products": [
+    {"name": "银黄口服液", "specification": "10ml×10支/盒", "category": "口服液类", "base_unit": "支", "units_per_box": "10", "materials": ["金银花", "黄芩提取物", "蔗糖", "苯甲酸钠"]},
+    {"name": "板蓝根颗粒", "specification": "10g×20袋/盒", "category": "颗粒剂类", "base_unit": "袋", "units_per_box": "20", "materials": ["板蓝根", "蔗糖", "糊精"]},
+    {"name": "六味地黄胶囊", "specification": "0.3g×60粒/盒", "category": "胶囊剂类", "base_unit": "粒", "units_per_box": "60", "materials": ["熟地黄", "山茱萸", "山药", "泽泻", "茯苓", "牡丹皮", "空心胶囊"]}
+  ],
+  "industry_category": "中成药行业整体",
+  "knowledge_types": ["formula", "process", "equipment", "industry_benchmark", "market_prices", "cost_baseline", "regulation", "regulation_summary", "other"],
+  "reference_metrics": [
+    {"source_name": "材料成本占比", "id": "material_share", "unit": "%", "direction": "context_only", "calculation": "element_share", "element": "材料"},
+    {"source_name": "人工成本占比", "id": "labor_share", "unit": "%", "direction": "context_only", "calculation": "element_share", "element": "人工"},
+    {"source_name": "制造费用占比", "id": "overhead_share", "unit": "%", "direction": "context_only", "calculation": "element_share", "element": "制费"},
+    {"source_name": "单位成本(元/支)", "id": "unit_cost_liquid", "unit": "元/支", "direction": "lower_cost", "calculation": "unit_conversion", "base_unit": "支"},
+    {"source_name": "单位成本(元/袋)", "id": "unit_cost_granule", "unit": "元/袋", "direction": "lower_cost", "calculation": "unit_conversion", "base_unit": "袋"},
+    {"source_name": "单位成本(元/粒)", "id": "unit_cost_capsule", "unit": "元/粒", "direction": "lower_cost", "calculation": "unit_conversion", "base_unit": "粒"},
+    {"source_name": "毛利率", "id": "gross_margin", "unit": "%", "direction": "higher", "calculation": "source_only"},
+    {"source_name": "成本同比变动率", "id": "cost_yoy", "unit": "%", "direction": "lower_cost", "calculation": "source_only"},
+    {"source_name": "制造费用占收入比", "id": "overhead_revenue_share", "unit": "%", "direction": "context_only", "calculation": "source_only"}
+  ],
+  "alerts": [{"id": "industry_cost_yoy_divergence", "metric_id": "cost_yoy", "rule": "home_above_p75_while_p50_negative", "action": "verification_draft_only", "requires_period_confirmation": true}],
+  "limitations": ["产品类别与包装换算是显式配置，不从模糊名称或正则猜测。", "成本占比是构成指标，偏低不直接证明效率更好；不得合成竞争力或节约得分。", "行业基准未提供样本、调查窗口和具体核算口径；只作参考位置与待核查预警。"]
+}

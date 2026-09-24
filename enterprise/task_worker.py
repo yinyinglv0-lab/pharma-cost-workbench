@@ -40,7 +40,8 @@ class TaskWorker:
         actor = provider()
         require(actor, "task.send")
         result = {"started_utc": datetime.now(timezone.utc).isoformat(), "dispatched": [],
-                  "synced": [], "errors": [], "dispatch_paused": False}
+                  "synced": [], "reminders_scheduled": [], "reminders_dispatched": [],
+                  "errors": [], "dispatch_paused": False}
         with self.client_factory() as client:
             try:
                 result["dispatched"] = self.repository.dispatch(client, actor=actor, limit=self.batch_size)
@@ -82,5 +83,14 @@ class TaskWorker:
                     break
                 except Exception as exc:
                     result["errors"].append({"operation": "sync", "task_id": row["task_id"], "error_type": type(exc).__name__})
+            try:
+                current = provider()
+                require(current, "task.remind")
+                result["reminders_scheduled"] = self.repository.schedule_reminders(actor=current, limit=self.batch_size)
+                result["reminders_dispatched"] = self.repository.dispatch_reminders(client, actor=current, limit=self.batch_size)
+            except MaintenanceError:
+                result["dispatch_paused"] = True
+            except Exception as exc:
+                result["errors"].append({"operation": "reminders", "error_type": type(exc).__name__})
         result["finished_utc"] = datetime.now(timezone.utc).isoformat()
         return result

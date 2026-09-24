@@ -1,0 +1,32 @@
+SIMULATION ONLY - MACHINERY REFERENCE KNOWLEDGE
+
+Classification and scope
+This document, all associated CSV cells, product names, SIM-prefixed specifications, factories, material components, process names, equipment names and numeric ranges are invented SIMULATION fixtures. No value is researched, externally benchmarked, or evidence of a real manufacturing event. The illustrative periods are 2026-05 and 2026-06. The reporting unit is piece; every monetary value uses CNY, with unit costs in CNY/piece and hourly labor rates in CNY/hour.
+Exact factories: SIMULATION Machinery Home Factory and SIMULATION Machinery Peer Factory.
+
+Products, reference BOM, processes and equipment
+1. Exact product: SIMULATION Centrifugal Pump. Exact specification: SIM-PUMP-50, a SIMULATION-only specification identifier.
+   Reference BOM: pump_casing = SIMULATION Pump Casing, 0.9 piece per reporting piece; pump_impeller = SIMULATION Pump Impeller, 1.2 piece per reporting piece.
+   Reference process: pump_assembly_test = SIMULATION Pump Assembly and Test.
+   Reference equipment: pump_test_bench = SIMULATION Pump Assembly and Test Bench, explicitly linked to pump_assembly_test.
+2. Exact product: SIMULATION Gear Housing. Exact specification: SIM-HOUSING-80, a SIMULATION-only specification identifier.
+   Reference BOM: housing_casting = SIMULATION Gear Housing Casting, 0.9 piece per reporting piece; housing_cover = SIMULATION Housing Cover, 1.2 piece per reporting piece.
+   Reference process: housing_machining_inspection = SIMULATION Housing Machining and Inspection.
+   Reference equipment: housing_cnc_center = SIMULATION Housing CNC Machining Center, explicitly linked to housing_machining_inspection.
+The fractional BOM quantities are synthetic reference factors, not actual consumption, assembly instructions, or an approved engineering BOM. Product/process relationships and metric/process relationships are reciprocal reference links. They do not establish that an operation or equipment event occurred.
+
+Measurement and fixture arithmetic
+Each product independently repeats the same base costs. Do not double a product's costs because two products are configured.
+For each product, home May has material/labor/overhead unit costs 10/4/6 CNY/piece, unit cost 20 CNY/piece, output 100 piece and total 2000 CNY. Home June has 12/5/6 CNY/piece, unit cost 23 CNY/piece, output 120 piece and total 2760 CNY.
+For each product, peer May has 9/4/5 CNY/piece, unit cost 18 CNY/piece, output 90 piece and total 1620 CNY. Peer June has 10/4/5 CNY/piece, unit cost 19 CNY/piece, output 110 piece and total 2090 CNY.
+Every budget identity has 10/4/6 CNY/piece, unit cost 20 CNY/piece, output 100 piece and total 2000 CNY.
+Each actual identity has exactly two declared material lines. Each line has half the material unit cost and a matching amount. The first listed BOM material has a supplied simulated quantity equal to output in piece and a unit price equal to its half material unit cost in CNY/piece. The second material has unavailable quantity, quantity_unit and unit_price, represented by empty cells, not zero. Never substitute the reference BOM factors for either material's source quantity.
+Each actual identity has one labor line: supplied simulated hours equal output numerically, hourly_rate equals the labor unit cost numerically, headcount is 5 and working_days is 20. Amount equals hours times hourly_rate exactly; no staffing utilization or shift duration is inferred.
+Each actual identity has SIMULATION Energy and SIMULATION Maintenance overhead lines, each allocating half the overhead unit cost. These categories do not document meter readings, invoices, failures or maintenance events.
+
+Reference metric vocabulary and simulated ranges
+Both processes reference material_share, labor_share, overhead_share, unit_cost and yield_pct. The first three are component/unit-cost shares in percent; unit_cost uses the total element and CNY/piece. yield_pct is source_only with element none, not calculated from cost or output; no actual yield observation is supplied.
+For demonstration only, invented reference bands are material share 40-60%, labor share 15-30%, overhead share 20-35%, unit cost 15-30 CNY/piece, and yield 90-99%. These are SIMULATION reference ranges only, not actual period measurements, acceptance limits, researched benchmarks or evidence of a real event. They do not cause automatic alerts or actions.
+
+Limitations
+The accounting identities explain exact numerical differences, not confirmed operational causes. A peer comparison does not prove equivalent capacity, product quality, process settings or efficiency. Missing observations remain unavailable. The manifest is documentation only: its conventional filenames are not runtime path configuration. Configuration and examples grant no authorization and dispatch no tasks. Real use requires independently verified source bytes, controlled knowledge release and authorized application integration; none is asserted here.

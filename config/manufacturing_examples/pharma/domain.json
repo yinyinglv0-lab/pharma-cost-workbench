@@ -1,0 +1,96 @@
+{
+  "schema_version": "manufacturing-domain/2",
+  "id": "simulation_pharma_tablets",
+  "version": "1.0-simulation",
+  "industry": "pharma",
+  "label": "SIMULATION pharmaceutical fourth and fifth tablet products",
+  "status": "active",
+  "data_classification": "simulation",
+  "source_dataset": "SIMULATION pharma manufacturing fixtures for May and June 2026",
+  "reporting_unit": "tablet",
+  "currency": "CNY",
+  "factories": {
+    "home": "SIMULATION Pharma Home Factory",
+    "peer": "SIMULATION Pharma Peer Factory"
+  },
+  "labels": {
+    "home": "SIMULATION home factory",
+    "peer": "SIMULATION peer factory",
+    "material": "Material cost",
+    "labor": "Labor cost",
+    "overhead": "Manufacturing overhead",
+    "unitcost": "Unit cost (CNY/tablet)",
+    "output": "Output (tablet)",
+    "total": "Total cost (CNY)"
+  },
+  "products": [
+    {
+      "id": "pharma_p4",
+      "name": "SIMULATION Fourth Product Tablet",
+      "specification": "SIM-TAB-P4",
+      "category": "SIMULATION pharmaceutical tablet",
+      "reporting_unit": "tablet",
+      "materials": ["SIMULATION P4 Powder Blend", "SIMULATION P4 Binder"],
+      "bom": [
+        {"material_id": "pharma_p4_blend", "quantity_per_reporting_unit": "0.9", "unit": "g"},
+        {"material_id": "pharma_p4_binder", "quantity_per_reporting_unit": "1.2", "unit": "g"}
+      ],
+      "process_ids": ["dry_granulation"],
+      "equipment_ids": ["roller_compactor"]
+    },
+    {
+      "id": "pharma_p5",
+      "name": "SIMULATION Fifth Product Tablet",
+      "specification": "SIM-TAB-P5",
+      "category": "SIMULATION pharmaceutical tablet",
+      "reporting_unit": "tablet",
+      "materials": ["SIMULATION P5 Powder Blend", "SIMULATION P5 Coating Premix"],
+      "bom": [
+        {"material_id": "pharma_p5_blend", "quantity_per_reporting_unit": "0.9", "unit": "g"},
+        {"material_id": "pharma_p5_coating", "quantity_per_reporting_unit": "1.2", "unit": "g"}
+      ],
+      "process_ids": ["film_coating"],
+      "equipment_ids": ["fluid_bed_coater"]
+    }
+  ],
+  "materials": [
+    {"id": "pharma_p4_blend", "name": "SIMULATION P4 Powder Blend", "unit": "g"},
+    {"id": "pharma_p4_binder", "name": "SIMULATION P4 Binder", "unit": "g"},
+    {"id": "pharma_p5_blend", "name": "SIMULATION P5 Powder Blend", "unit": "g"},
+    {"id": "pharma_p5_coating", "name": "SIMULATION P5 Coating Premix", "unit": "g"}
+  ],
+  "processes": [
+    {
+      "id": "dry_granulation",
+      "name": "SIMULATION Dry Granulation",
+      "product_ids": ["pharma_p4"],
+      "metric_ids": ["material_share", "labor_share", "overhead_share", "unit_cost", "yield_pct"]
+    },
+    {
+      "id": "film_coating",
+      "name": "SIMULATION Film Coating",
+      "product_ids": ["pharma_p5"],
+      "metric_ids": ["material_share", "labor_share", "overhead_share", "unit_cost", "yield_pct"]
+    }
+  ],
+  "equipment": [
+    {"id": "roller_compactor", "name": "SIMULATION Roller Compactor", "process_ids": ["dry_granulation"]},
+    {"id": "fluid_bed_coater", "name": "SIMULATION Fluid Bed Coater", "process_ids": ["film_coating"]}
+  ],
+  "industry_category": "SIMULATION pharmaceutical tablet manufacturing",
+  "knowledge_types": ["formula", "process", "equipment", "industry_benchmark", "cost_baseline"],
+  "reference_metrics": [
+    {"id": "material_share", "source_name": "SIMULATION Material Cost Share", "unit": "%", "direction": "context_only", "calculation": "element_share", "element": "material", "process_ids": ["dry_granulation", "film_coating"]},
+    {"id": "labor_share", "source_name": "SIMULATION Labor Cost Share", "unit": "%", "direction": "context_only", "calculation": "element_share", "element": "labor", "process_ids": ["dry_granulation", "film_coating"]},
+    {"id": "overhead_share", "source_name": "SIMULATION Overhead Cost Share", "unit": "%", "direction": "context_only", "calculation": "element_share", "element": "overhead", "process_ids": ["dry_granulation", "film_coating"]},
+    {"id": "unit_cost", "source_name": "SIMULATION Unit Cost", "unit": "CNY/tablet", "direction": "lower_cost", "calculation": "unit_cost", "element": "total", "process_ids": ["dry_granulation", "film_coating"]},
+    {"id": "yield_pct", "source_name": "SIMULATION Process Yield", "unit": "%", "direction": "higher", "calculation": "source_only", "element": "none", "process_ids": ["dry_granulation", "film_coating"]}
+  ],
+  "limitations": [
+    "SIMULATION only: synthetic fourth and fifth products, factories, costs and vocabulary; not production, clinical or regulatory evidence.",
+    "Reporting is tablet with explicit identity conversion only; no tablet-to-box or box-to-tablet conversion is declared or inferred.",
+    "BOM quantities 0.9 and 1.2 g per tablet are deliberately synthetic reference values, not actual material usage or a validated formulation.",
+    "Process yield is source_only with no observations in this fixture; never infer yield, equipment events or operational causes from costs or reference ranges.",
+    "Empty material quantity and price cells are unavailable observations, not zero or values derivable from BOM or reference prices."
+  ]
+}

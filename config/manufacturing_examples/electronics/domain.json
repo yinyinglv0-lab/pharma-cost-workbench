@@ -1,0 +1,98 @@
+{
+  "schema_version": "manufacturing-domain/2",
+  "id": "simulation_electronics",
+  "version": "1.0.0",
+  "industry": "electronics",
+  "label": "SIMULATION Electronics manufacturing example",
+  "status": "active",
+  "data_classification": "simulation",
+  "source_dataset": "SIMULATION electronics example; synthetic May-June 2026 data",
+  "reporting_unit": "piece",
+  "currency": "CNY",
+  "factories": {
+    "home": "SIMULATION Electronics Home Factory",
+    "peer": "SIMULATION Electronics Peer Factory"
+  },
+  "labels": {
+    "home": "SIMULATION Home factory",
+    "peer": "SIMULATION Peer factory",
+    "material": "Component cost",
+    "labor": "Labor cost",
+    "overhead": "Manufacturing overhead",
+    "unitcost": "Unit cost (CNY/piece)",
+    "output": "Output (piece)",
+    "total": "Total cost (CNY)"
+  },
+  "products": [
+    {
+      "id": "control_pcb",
+      "name": "SIMULATION Control PCB",
+      "specification": "SIM-PCB-4L",
+      "category": "SIMULATION PCB assembly",
+      "reporting_unit": "piece",
+      "materials": ["SIMULATION Four-layer bare PCB", "SIMULATION Microcontroller IC"],
+      "bom": [
+        {"material_id": "four_layer_bare_pcb", "quantity_per_reporting_unit": "0.9", "unit": "piece"},
+        {"material_id": "microcontroller_ic", "quantity_per_reporting_unit": "1.2", "unit": "piece"}
+      ],
+      "process_ids": ["control_pcb_assembly"],
+      "equipment_ids": ["control_smt_line"]
+    },
+    {
+      "id": "sensor_pcb",
+      "name": "SIMULATION Sensor PCB",
+      "specification": "SIM-PCB-2L",
+      "category": "SIMULATION PCB assembly",
+      "reporting_unit": "piece",
+      "materials": ["SIMULATION Two-layer bare PCB", "SIMULATION Sensor IC"],
+      "bom": [
+        {"material_id": "two_layer_bare_pcb", "quantity_per_reporting_unit": "0.9", "unit": "piece"},
+        {"material_id": "sensor_ic", "quantity_per_reporting_unit": "1.2", "unit": "piece"}
+      ],
+      "process_ids": ["sensor_pcb_assembly"],
+      "equipment_ids": ["sensor_smt_line"]
+    }
+  ],
+  "materials": [
+    {"id": "four_layer_bare_pcb", "name": "SIMULATION Four-layer bare PCB", "unit": "piece"},
+    {"id": "microcontroller_ic", "name": "SIMULATION Microcontroller IC", "unit": "piece"},
+    {"id": "two_layer_bare_pcb", "name": "SIMULATION Two-layer bare PCB", "unit": "piece"},
+    {"id": "sensor_ic", "name": "SIMULATION Sensor IC", "unit": "piece"}
+  ],
+  "processes": [
+    {
+      "id": "control_pcb_assembly",
+      "name": "SIMULATION Control PCB surface-mount assembly",
+      "product_ids": ["control_pcb"],
+      "metric_ids": ["material_share", "labor_share", "overhead_share", "unit_cost", "yield_pct"]
+    },
+    {
+      "id": "sensor_pcb_assembly",
+      "name": "SIMULATION Sensor PCB surface-mount assembly",
+      "product_ids": ["sensor_pcb"],
+      "metric_ids": ["material_share", "labor_share", "overhead_share", "unit_cost", "yield_pct"]
+    }
+  ],
+  "equipment": [
+    {"id": "control_smt_line", "name": "SIMULATION Control PCB SMT line", "process_ids": ["control_pcb_assembly"]},
+    {"id": "sensor_smt_line", "name": "SIMULATION Sensor PCB SMT line", "process_ids": ["sensor_pcb_assembly"]}
+  ],
+  "industry_category": "SIMULATION Electronics PCB assembly",
+  "knowledge_types": ["formula", "process", "equipment", "cost_baseline", "industry_benchmark", "other"],
+  "reference_metrics": [
+    {"id": "material_share", "source_name": "SIMULATION Component cost share", "unit": "%", "direction": "context_only", "calculation": "element_share", "element": "material", "process_ids": ["control_pcb_assembly", "sensor_pcb_assembly"]},
+    {"id": "labor_share", "source_name": "SIMULATION Labor cost share", "unit": "%", "direction": "context_only", "calculation": "element_share", "element": "labor", "process_ids": ["control_pcb_assembly", "sensor_pcb_assembly"]},
+    {"id": "overhead_share", "source_name": "SIMULATION Overhead cost share", "unit": "%", "direction": "context_only", "calculation": "element_share", "element": "overhead", "process_ids": ["control_pcb_assembly", "sensor_pcb_assembly"]},
+    {"id": "unit_cost", "source_name": "SIMULATION Unit cost", "unit": "CNY/piece", "direction": "lower_cost", "calculation": "unit_cost", "element": "total", "process_ids": ["control_pcb_assembly", "sensor_pcb_assembly"]},
+    {"id": "yield_pct", "source_name": "SIMULATION Yield reference", "unit": "%", "direction": "context_only", "calculation": "source_only", "element": "none", "process_ids": ["control_pcb_assembly", "sensor_pcb_assembly"]}
+  ],
+  "limitations": [
+    "SIMULATION only: all factories, products, SIM-prefixed specifications, costs, quantities and reference ranges are invented; no researched or commercial claims.",
+    "Active status means schema-ready demonstration configuration, not production approval or authorization.",
+    "BOM coefficients 0.9 and 1.2 piece per reporting piece are arbitrary reference averages only, not observed consumption, a literal board assembly recipe or fractional physical components.",
+    "Only the first component row in each actual identity supplies simulated source quantity and unit price; the second leaves both unknown. Do not infer missing actuals from the BOM.",
+    "Yield and process/equipment associations are reference context, not measured yields, actual events or proven causes of cost changes.",
+    "Both products intentionally use identical per-product base costs; no product-level amount is doubled. Only CNY and explicit piece-to-piece identity conversion are configured.",
+    "Two months and two simulated factories do not establish seasonality, market benchmarks, process comparability or operational efficiency."
+  ]
+}

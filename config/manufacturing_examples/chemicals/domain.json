@@ -1,0 +1,98 @@
+{
+  "schema_version": "manufacturing-domain/2",
+  "id": "simulation_chemicals",
+  "version": "1.0.0",
+  "industry": "chemicals",
+  "label": "SIMULATION Chemicals manufacturing example",
+  "status": "active",
+  "data_classification": "simulation",
+  "source_dataset": "SIMULATION chemicals example; synthetic May-June 2026 data",
+  "reporting_unit": "kg",
+  "currency": "CNY",
+  "factories": {
+    "home": "SIMULATION Chemicals Home Factory",
+    "peer": "SIMULATION Chemicals Peer Factory"
+  },
+  "labels": {
+    "home": "SIMULATION Home factory",
+    "peer": "SIMULATION Peer factory",
+    "material": "Material cost",
+    "labor": "Labor cost",
+    "overhead": "Manufacturing overhead",
+    "unitcost": "Unit cost (CNY/kg)",
+    "output": "Output (kg)",
+    "total": "Total cost (CNY)"
+  },
+  "products": [
+    {
+      "id": "epoxy_resin",
+      "name": "SIMULATION Epoxy Resin",
+      "specification": "SIM-RESIN-E100",
+      "category": "SIMULATION Resin",
+      "reporting_unit": "kg",
+      "materials": ["SIMULATION Bisphenol A", "SIMULATION Epichlorohydrin"],
+      "bom": [
+        {"material_id": "bisphenol_a", "quantity_per_reporting_unit": "0.9", "unit": "kg"},
+        {"material_id": "epichlorohydrin", "quantity_per_reporting_unit": "1.2", "unit": "kg"}
+      ],
+      "process_ids": ["epoxy_synthesis"],
+      "equipment_ids": ["epoxy_reactor"]
+    },
+    {
+      "id": "acrylic_resin",
+      "name": "SIMULATION Acrylic Resin",
+      "specification": "SIM-RESIN-A200",
+      "category": "SIMULATION Resin",
+      "reporting_unit": "kg",
+      "materials": ["SIMULATION Butyl acrylate", "SIMULATION Methyl methacrylate"],
+      "bom": [
+        {"material_id": "butyl_acrylate", "quantity_per_reporting_unit": "0.9", "unit": "kg"},
+        {"material_id": "methyl_methacrylate", "quantity_per_reporting_unit": "1.2", "unit": "kg"}
+      ],
+      "process_ids": ["acrylic_polymerization"],
+      "equipment_ids": ["acrylic_reactor"]
+    }
+  ],
+  "materials": [
+    {"id": "bisphenol_a", "name": "SIMULATION Bisphenol A", "unit": "kg"},
+    {"id": "epichlorohydrin", "name": "SIMULATION Epichlorohydrin", "unit": "kg"},
+    {"id": "butyl_acrylate", "name": "SIMULATION Butyl acrylate", "unit": "kg"},
+    {"id": "methyl_methacrylate", "name": "SIMULATION Methyl methacrylate", "unit": "kg"}
+  ],
+  "processes": [
+    {
+      "id": "epoxy_synthesis",
+      "name": "SIMULATION Epoxy resin synthesis",
+      "product_ids": ["epoxy_resin"],
+      "metric_ids": ["material_share", "labor_share", "overhead_share", "unit_cost", "yield_pct"]
+    },
+    {
+      "id": "acrylic_polymerization",
+      "name": "SIMULATION Acrylic resin polymerization",
+      "product_ids": ["acrylic_resin"],
+      "metric_ids": ["material_share", "labor_share", "overhead_share", "unit_cost", "yield_pct"]
+    }
+  ],
+  "equipment": [
+    {"id": "epoxy_reactor", "name": "SIMULATION Epoxy stirred reactor", "process_ids": ["epoxy_synthesis"]},
+    {"id": "acrylic_reactor", "name": "SIMULATION Acrylic polymerization reactor", "process_ids": ["acrylic_polymerization"]}
+  ],
+  "industry_category": "SIMULATION Synthetic resin manufacturing",
+  "knowledge_types": ["formula", "process", "equipment", "cost_baseline", "industry_benchmark", "other"],
+  "reference_metrics": [
+    {"id": "material_share", "source_name": "SIMULATION Material cost share", "unit": "%", "direction": "context_only", "calculation": "element_share", "element": "material", "process_ids": ["epoxy_synthesis", "acrylic_polymerization"]},
+    {"id": "labor_share", "source_name": "SIMULATION Labor cost share", "unit": "%", "direction": "context_only", "calculation": "element_share", "element": "labor", "process_ids": ["epoxy_synthesis", "acrylic_polymerization"]},
+    {"id": "overhead_share", "source_name": "SIMULATION Overhead cost share", "unit": "%", "direction": "context_only", "calculation": "element_share", "element": "overhead", "process_ids": ["epoxy_synthesis", "acrylic_polymerization"]},
+    {"id": "unit_cost", "source_name": "SIMULATION Unit cost", "unit": "CNY/kg", "direction": "lower_cost", "calculation": "unit_cost", "element": "total", "process_ids": ["epoxy_synthesis", "acrylic_polymerization"]},
+    {"id": "yield_pct", "source_name": "SIMULATION Yield reference", "unit": "%", "direction": "context_only", "calculation": "source_only", "element": "none", "process_ids": ["epoxy_synthesis", "acrylic_polymerization"]}
+  ],
+  "limitations": [
+    "SIMULATION only: all factories, products, SIM-prefixed specifications, amounts, quantities and reference ranges are invented; no researched or commercial claims.",
+    "Active status means schema-ready demonstration configuration, not production approval or authorization.",
+    "BOM quantities 0.9 and 1.2 kg per reporting kg are illustrative references only, not observed consumption, a balanced recipe or operating instructions.",
+    "Only the first material row in each actual identity supplies simulated source quantity and unit price; the second leaves both unknown. Do not infer missing actuals from the BOM.",
+    "Yield and process/equipment associations are reference context, not measured yields, actual events or proven causes of cost changes.",
+    "Both products intentionally use identical per-product base costs; no product-level amount is doubled. Only CNY and explicit kg-to-kg identity conversion are configured.",
+    "Two months and two simulated factories do not establish seasonality, market benchmarks, process comparability or operational efficiency."
+  ]
+}

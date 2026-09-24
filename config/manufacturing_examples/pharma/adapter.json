@@ -1,0 +1,40 @@
+{
+  "schema_version": "manufacturing-adapter/2",
+  "id": "simulation_pharma_tablet_adapter",
+  "version": "1.0-simulation",
+  "industry": "pharma",
+  "label": "SIMULATION pharma tablet identity adapter",
+  "status": "active",
+  "columns": {
+    "factory": "factory",
+    "product": "product",
+    "specification": "specification",
+    "month": "month",
+    "material": "material",
+    "labor": "labor",
+    "overhead": "overhead",
+    "unitcost": "unitcost",
+    "output": "output",
+    "total": "total"
+  },
+  "currency": {
+    "source_column": "currency",
+    "target": "CNY",
+    "rates": [{"source": "CNY", "factor": "1"}]
+  },
+  "units": {
+    "quantity_column": "quantity_unit",
+    "cost_denominator_column": "cost_denominator_unit",
+    "conversions": [{"source": "tablet", "target": "tablet", "factor": "1"}]
+  },
+  "factories": ["SIMULATION Pharma Home Factory", "SIMULATION Pharma Peer Factory"],
+  "product_units": [
+    {"product": "SIMULATION Fourth Product Tablet", "specification": "SIM-TAB-P4", "unit": "tablet"},
+    {"product": "SIMULATION Fifth Product Tablet", "specification": "SIM-TAB-P5", "unit": "tablet"}
+  ],
+  "limitations": [
+    "SIMULATION only: active means executable synthetic fixture bindings, not production approval or authorization.",
+    "All currency values are CNY with explicit identity factor 1; tablet output and cost denominators also use explicit identity factor 1.",
+    "No box conversion, packing count, formula execution, path loading, permission grant or actual process inference is supported."
+  ]
+}

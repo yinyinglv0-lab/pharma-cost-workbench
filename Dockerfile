@@ -49,14 +49,23 @@ RUN if [ "$INSTALL_LOCAL_MODELS" = "true" ]; then \
     fi
 
 # .dockerignore uses an allowlist: competition files, databases and secrets never
-# enter the build context. COPY intentionally names code trees only.
+# enter the build context. Public examples are the exact-hash SIMULATION exception.
 COPY *.py /app/
 COPY enterprise/ /app/enterprise/
 COPY app_pages/ /app/app_pages/
 COPY dashboard/ /app/dashboard/
 COPY report/ /app/report/
+# Reviewed non-secret semantics only; never COPY arbitrary customer configuration.
+COPY config/domain_profiles/pharma.json /app/config/domain_profiles/pharma.json
+COPY config/manufacturing_adapters/machinery.json config/manufacturing_adapters/auto_parts.json config/manufacturing_adapters/chemicals.json config/manufacturing_adapters/electronics.json /app/config/manufacturing_adapters/
 COPY rag_fixed_v1/ /app/rag_fixed_v1/
 COPY scripts/ /app/scripts/
+# .dockerignore lists each reviewed example; no wildcard CSV/data admission.
+COPY config/manufacturing_examples/ /app/config/manufacturing_examples/
+COPY README.md /app/README.md
+COPY docs/跨行业迁移与边界.md docs/第二轮核查实施与运行说明.md docs/受控散文生成与阅读导出.md /app/docs/
+# Do not import the application or load private config while checking public bytes.
+RUN python -c "from scripts.build_source_bundle import ROOT, REVIEWED_SIMULATION_HASHES, read_regular, scan_text, validate_reviewed_simulations; s = {n: read_regular(ROOT / n) for n in REVIEWED_SIMULATION_HASHES}; validate_reviewed_simulations(s); assert not any(scan_text(n, b)[0] for n, b in s.items()), 'Public simulation text scan failed'"
 COPY assets/ /app/assets/
 COPY deploy/entrypoint.py deploy/healthcheck.py deploy/generate_inventory.py deploy/container_smoke.py /app/deploy/
 COPY deploy/streamlit.config.toml /app/.streamlit/config.toml

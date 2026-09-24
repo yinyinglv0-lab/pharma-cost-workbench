@@ -15,6 +15,7 @@ os.environ['COST_CHROMA_PATH'] = str(_SESSION_ROOT / 'chroma')
 os.environ['COST_LLM_CONFIG_FILE'] = str(_SESSION_ROOT / 'no-model.json')
 os.environ['COST_LLM_API_KEY'] = ''
 os.environ.pop('DASHSCOPE_API_KEY', None)
+os.environ.pop('DEEPSEEK_API_KEY', None)
 os.environ['HF_HUB_OFFLINE'] = '1'
 os.environ['TRANSFORMERS_OFFLINE'] = '1'
 os.environ.setdefault('STREAMLIT_SERVER_ADDRESS', '127.0.0.1')
@@ -31,6 +32,7 @@ def isolated_system_root(tmp_path, monkeypatch):
     monkeypatch.setenv('COST_LLM_CONFIG_FILE', str(tmp_path / 'no-model.json'))
     monkeypatch.setenv('COST_LLM_API_KEY', '')
     monkeypatch.delenv('DASHSCOPE_API_KEY', raising=False)
+    monkeypatch.delenv('DEEPSEEK_API_KEY', raising=False)
     monkeypatch.delenv('COST_WORKER_SUBJECT', raising=False)
     for name, module in list(sys.modules.items()):
         if module is None:

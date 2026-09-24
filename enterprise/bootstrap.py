@@ -15,13 +15,14 @@ PRODUCTS = ['银黄口服液', '板蓝根颗粒', '六味地黄胶囊']
 def official_document_specs(source_root=None):
     root = Path(source_root) if source_root else DATA_DIR
     specs = []
-    def add(filename, category, products, factories, *, public=False, metadata=None):
+    def add(filename, category, products, factories, *, public=False, metadata=None,
+            effective_from='2025-01-01', effective_to=None):
         path = root / filename
         if not path.is_file():
             raise ValueError('缺少核准原件：' + filename)
         specs.append({'filename': filename, 'title': path.stem, 'scope_products': products,
                       'scope_factories': factories, 'visibility': 'public' if public else 'scoped',
-                      'effective_from': '2025-01-01', 'category': category,
+                      'effective_from': effective_from, 'effective_to': effective_to, 'category': category,
                       'sha256': hashlib.sha256(path.read_bytes()).hexdigest(),
                       'metadata': {'source_dataset': '赛方模拟数据',
                                    'date_basis': '演示回溯基线；非宣称原文件实际法律/业务生效日',
@@ -44,10 +45,16 @@ def official_document_specs(source_root=None):
                   'known_conflicts': ['29为型号记录行数，数量列合计37台套',
                                       '参考月折旧与残值率假设不一致；财务金额只使用成本CSV已确认记录']})
     add('药材市场价格行情_2026年上半年.csv', '市场参考', PRODUCTS, ['中药一厂', '中药二厂'],
+        effective_from='2026-01-01', effective_to='2026-06-30',
         metadata={'authority': 'market_reference', 'not_actual_procurement': True,
+                  'evidence_role': 'market_reference',
+                  'source_period': {'start': '2026-01-01', 'end': '2026-06-30'},
                   'unit_note': '胶囊为元/万粒，药材通常为元/kg，禁止混用'})
     add('行业成本基准数据_2026.csv', '行业基准', PRODUCTS, ['中药一厂', '中药二厂'],
-        metadata={'authority': 'industry_reference', 'claim_boundary': '区间基准不等于实际可节约金额'})
+        effective_from='2026-01-01', effective_to='2026-12-31',
+        metadata={'authority': 'industry_reference', 'evidence_role': 'benchmark_reference',
+                  'source_period': {'start': '2026-01-01', 'end': '2026-12-31'},
+                  'claim_boundary': '区间基准不等于实际可节约金额；来源本厂水平不是本期确定性事实'})
     return specs
 
 
@@ -61,4 +68,5 @@ def bootstrap_knowledge(*, principal, source_root=None, root=None, publish=True,
     return bootstrap_official(source, repository=Repository(root or MANAGED_DIR, principal=principal),
                               principal=principal, documents=official_document_specs(source),
                               reason='依据赛方全量数据审计核准原件与范围；保留已知冲突和模拟数据边界',
-                              publish=publish, embedding_model_path=None if dense else '', build_timeout=build_timeout)
+                              publish=publish, embedding_model_path=None if dense else '',
+                              require_embeddings=dense, build_timeout=build_timeout)

@@ -1,0 +1,96 @@
+{
+  "schema_version": "manufacturing-domain/2",
+  "id": "simulation_machinery",
+  "version": "1.0.0",
+  "industry": "machinery",
+  "label": "SIMULATION Machinery Cost Example",
+  "status": "active",
+  "data_classification": "simulation",
+  "source_dataset": "SIMULATION machinery fixture for May and June 2026; not production observations",
+  "reporting_unit": "piece",
+  "currency": "CNY",
+  "factories": {
+    "home": "SIMULATION Machinery Home Factory",
+    "peer": "SIMULATION Machinery Peer Factory"
+  },
+  "labels": {
+    "home": "SIMULATION Machinery Home Factory",
+    "peer": "SIMULATION Machinery Peer Factory",
+    "material": "Material cost",
+    "labor": "Labor cost",
+    "overhead": "Manufacturing overhead",
+    "unitcost": "Unit cost (CNY/piece)",
+    "output": "Output (piece)",
+    "total": "Total cost (CNY)"
+  },
+  "products": [
+    {
+      "id": "centrifugal_pump",
+      "name": "SIMULATION Centrifugal Pump",
+      "specification": "SIM-PUMP-50",
+      "category": "SIMULATION pump assembly",
+      "reporting_unit": "piece",
+      "materials": ["SIMULATION Pump Casing", "SIMULATION Pump Impeller"],
+      "bom": [
+        {"material_id": "pump_casing", "quantity_per_reporting_unit": "0.9", "unit": "piece"},
+        {"material_id": "pump_impeller", "quantity_per_reporting_unit": "1.2", "unit": "piece"}
+      ],
+      "process_ids": ["pump_assembly_test"],
+      "equipment_ids": ["pump_test_bench"]
+    },
+    {
+      "id": "gear_housing",
+      "name": "SIMULATION Gear Housing",
+      "specification": "SIM-HOUSING-80",
+      "category": "SIMULATION machined housing",
+      "reporting_unit": "piece",
+      "materials": ["SIMULATION Gear Housing Casting", "SIMULATION Housing Cover"],
+      "bom": [
+        {"material_id": "housing_casting", "quantity_per_reporting_unit": "0.9", "unit": "piece"},
+        {"material_id": "housing_cover", "quantity_per_reporting_unit": "1.2", "unit": "piece"}
+      ],
+      "process_ids": ["housing_machining_inspection"],
+      "equipment_ids": ["housing_cnc_center"]
+    }
+  ],
+  "materials": [
+    {"id": "pump_casing", "name": "SIMULATION Pump Casing", "unit": "piece"},
+    {"id": "pump_impeller", "name": "SIMULATION Pump Impeller", "unit": "piece"},
+    {"id": "housing_casting", "name": "SIMULATION Gear Housing Casting", "unit": "piece"},
+    {"id": "housing_cover", "name": "SIMULATION Housing Cover", "unit": "piece"}
+  ],
+  "processes": [
+    {
+      "id": "pump_assembly_test",
+      "name": "SIMULATION Pump Assembly and Test",
+      "product_ids": ["centrifugal_pump"],
+      "metric_ids": ["material_share", "labor_share", "overhead_share", "unit_cost", "yield_pct"]
+    },
+    {
+      "id": "housing_machining_inspection",
+      "name": "SIMULATION Housing Machining and Inspection",
+      "product_ids": ["gear_housing"],
+      "metric_ids": ["material_share", "labor_share", "overhead_share", "unit_cost", "yield_pct"]
+    }
+  ],
+  "equipment": [
+    {"id": "pump_test_bench", "name": "SIMULATION Pump Assembly and Test Bench", "process_ids": ["pump_assembly_test"]},
+    {"id": "housing_cnc_center", "name": "SIMULATION Housing CNC Machining Center", "process_ids": ["housing_machining_inspection"]}
+  ],
+  "industry_category": "SIMULATION machinery manufacturing",
+  "knowledge_types": ["formula", "process", "equipment", "cost_baseline", "other"],
+  "reference_metrics": [
+    {"id": "material_share", "source_name": "SIMULATION Material Cost Share", "unit": "%", "direction": "context_only", "calculation": "element_share", "element": "material", "process_ids": ["pump_assembly_test", "housing_machining_inspection"]},
+    {"id": "labor_share", "source_name": "SIMULATION Labor Cost Share", "unit": "%", "direction": "context_only", "calculation": "element_share", "element": "labor", "process_ids": ["pump_assembly_test", "housing_machining_inspection"]},
+    {"id": "overhead_share", "source_name": "SIMULATION Overhead Cost Share", "unit": "%", "direction": "context_only", "calculation": "element_share", "element": "overhead", "process_ids": ["pump_assembly_test", "housing_machining_inspection"]},
+    {"id": "unit_cost", "source_name": "SIMULATION Unit Cost", "unit": "CNY/piece", "direction": "lower_cost", "calculation": "unit_cost", "element": "total", "process_ids": ["pump_assembly_test", "housing_machining_inspection"]},
+    {"id": "yield_pct", "source_name": "SIMULATION Yield Reference", "unit": "%", "direction": "higher", "calculation": "source_only", "element": "none", "process_ids": ["pump_assembly_test", "housing_machining_inspection"]}
+  ],
+  "limitations": [
+    "All product, specification, factory, process, equipment, cost and output labels and values are SIMULATION fixtures, not production observations or researched benchmarks.",
+    "BOM quantities 0.9 and 1.2 piece per reporting piece are synthetic reference quantities only, not actual consumption or an approved engineering BOM.",
+    "Missing material quantity and price cells remain unavailable; do not derive them from the BOM or a reference price.",
+    "Process and equipment links are reference semantics, not evidence of actual events, capacity, yield, downtime or operational causes.",
+    "Both products independently reuse the same base costs; product-specific amounts must not be doubled. Configuration does not grant access or authorize task dispatch."
+  ]
+}

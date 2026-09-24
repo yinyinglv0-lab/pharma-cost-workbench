@@ -1,0 +1,96 @@
+{
+  "schema_version": "manufacturing-domain/2",
+  "id": "simulation_auto_parts",
+  "version": "1.0.0",
+  "industry": "auto_parts",
+  "label": "SIMULATION Auto Parts Cost Example",
+  "status": "active",
+  "data_classification": "simulation",
+  "source_dataset": "SIMULATION auto parts fixture for May and June 2026; not production observations",
+  "reporting_unit": "piece",
+  "currency": "CNY",
+  "factories": {
+    "home": "SIMULATION Auto Parts Home Factory",
+    "peer": "SIMULATION Auto Parts Peer Factory"
+  },
+  "labels": {
+    "home": "SIMULATION Auto Parts Home Factory",
+    "peer": "SIMULATION Auto Parts Peer Factory",
+    "material": "Material cost",
+    "labor": "Labor cost",
+    "overhead": "Manufacturing overhead",
+    "unitcost": "Unit cost (CNY/piece)",
+    "output": "Output (piece)",
+    "total": "Total cost (CNY)"
+  },
+  "products": [
+    {
+      "id": "brake_caliper",
+      "name": "SIMULATION Brake Caliper",
+      "specification": "SIM-CALIPER-40",
+      "category": "SIMULATION brake component",
+      "reporting_unit": "piece",
+      "materials": ["SIMULATION Caliper Body", "SIMULATION Caliper Piston"],
+      "bom": [
+        {"material_id": "caliper_body", "quantity_per_reporting_unit": "0.9", "unit": "piece"},
+        {"material_id": "caliper_piston", "quantity_per_reporting_unit": "1.2", "unit": "piece"}
+      ],
+      "process_ids": ["caliper_assembly_test"],
+      "equipment_ids": ["caliper_test_station"]
+    },
+    {
+      "id": "steering_knuckle",
+      "name": "SIMULATION Steering Knuckle",
+      "specification": "SIM-KNUCKLE-60",
+      "category": "SIMULATION steering component",
+      "reporting_unit": "piece",
+      "materials": ["SIMULATION Knuckle Forging", "SIMULATION Knuckle Bushing"],
+      "bom": [
+        {"material_id": "knuckle_forging", "quantity_per_reporting_unit": "0.9", "unit": "piece"},
+        {"material_id": "knuckle_bushing", "quantity_per_reporting_unit": "1.2", "unit": "piece"}
+      ],
+      "process_ids": ["knuckle_machining_inspection"],
+      "equipment_ids": ["knuckle_cnc_center"]
+    }
+  ],
+  "materials": [
+    {"id": "caliper_body", "name": "SIMULATION Caliper Body", "unit": "piece"},
+    {"id": "caliper_piston", "name": "SIMULATION Caliper Piston", "unit": "piece"},
+    {"id": "knuckle_forging", "name": "SIMULATION Knuckle Forging", "unit": "piece"},
+    {"id": "knuckle_bushing", "name": "SIMULATION Knuckle Bushing", "unit": "piece"}
+  ],
+  "processes": [
+    {
+      "id": "caliper_assembly_test",
+      "name": "SIMULATION Caliper Assembly and Leak Test",
+      "product_ids": ["brake_caliper"],
+      "metric_ids": ["material_share", "labor_share", "overhead_share", "unit_cost", "yield_pct"]
+    },
+    {
+      "id": "knuckle_machining_inspection",
+      "name": "SIMULATION Knuckle Machining and Inspection",
+      "product_ids": ["steering_knuckle"],
+      "metric_ids": ["material_share", "labor_share", "overhead_share", "unit_cost", "yield_pct"]
+    }
+  ],
+  "equipment": [
+    {"id": "caliper_test_station", "name": "SIMULATION Caliper Assembly and Leak Test Station", "process_ids": ["caliper_assembly_test"]},
+    {"id": "knuckle_cnc_center", "name": "SIMULATION Knuckle CNC Machining Center", "process_ids": ["knuckle_machining_inspection"]}
+  ],
+  "industry_category": "SIMULATION auto parts manufacturing",
+  "knowledge_types": ["formula", "process", "equipment", "cost_baseline", "other"],
+  "reference_metrics": [
+    {"id": "material_share", "source_name": "SIMULATION Material Cost Share", "unit": "%", "direction": "context_only", "calculation": "element_share", "element": "material", "process_ids": ["caliper_assembly_test", "knuckle_machining_inspection"]},
+    {"id": "labor_share", "source_name": "SIMULATION Labor Cost Share", "unit": "%", "direction": "context_only", "calculation": "element_share", "element": "labor", "process_ids": ["caliper_assembly_test", "knuckle_machining_inspection"]},
+    {"id": "overhead_share", "source_name": "SIMULATION Overhead Cost Share", "unit": "%", "direction": "context_only", "calculation": "element_share", "element": "overhead", "process_ids": ["caliper_assembly_test", "knuckle_machining_inspection"]},
+    {"id": "unit_cost", "source_name": "SIMULATION Unit Cost", "unit": "CNY/piece", "direction": "lower_cost", "calculation": "unit_cost", "element": "total", "process_ids": ["caliper_assembly_test", "knuckle_machining_inspection"]},
+    {"id": "yield_pct", "source_name": "SIMULATION Yield Reference", "unit": "%", "direction": "higher", "calculation": "source_only", "element": "none", "process_ids": ["caliper_assembly_test", "knuckle_machining_inspection"]}
+  ],
+  "limitations": [
+    "All product, specification, factory, process, equipment, cost and output labels and values are SIMULATION fixtures, not production observations or researched benchmarks.",
+    "BOM quantities 0.9 and 1.2 piece per reporting piece are synthetic reference quantities only, not actual consumption or an approved engineering BOM.",
+    "Missing material quantity and price cells remain unavailable; do not derive them from the BOM or a reference price.",
+    "Process and equipment links are reference semantics, not evidence of actual events, yield, product safety, certification or operational causes.",
+    "Both products independently reuse the same base costs; product-specific amounts must not be doubled. Configuration does not grant access or authorize task dispatch."
+  ]
+}

@@ -24,15 +24,15 @@ from .data_layer import (ELEMENT_LABELS, build_dashboard_data,
 # ---------------- 设计令牌 ----------------
 FONT = 'system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif'
 SURFACE = "#ffffff"
-INK_PRIMARY = "#0b0b0b"
-INK_SECONDARY = "#52514e"
-INK_MUTED = "#898781"
-GRID = "#e1e0d9"
-AXIS = "#c3c2b7"
+INK_PRIMARY = "#202A35"
+INK_SECONDARY = "#475569"
+INK_MUTED = "#64748B"
+GRID = "#E8EDF3"
+AXIS = "#CBD5E1"
 BORDER = "rgba(11,11,11,0.10)"
 
 # 分类色板：要素身份，固定槽位（材料/人工/制费）
-ELEMENT_COLORS = {"材料": "#2a78d6", "人工": "#eb6834", "制费": "#1baf7a"}
+ELEMENT_COLORS = {"材料": "#286AB0", "人工": "#B87526", "制费": "#0F8574"}
 # 分类色板：产品身份，固定槽位（与要素色板区分，经 CVD/对比度校验通过）
 PRODUCT_COLORS = {"银黄口服液": "#8b5cf6", "板蓝根颗粒": "#0e9aa7", "六味地黄胶囊": "#d97706"}
 # 动态发现新产品时的后备固定色序（同序稳定，不按排名换色）
@@ -148,17 +148,12 @@ def trend(d: dict, products: list, months: list) -> dict:
                    "itemWidth": 8, "itemHeight": 8, "itemGap": 18,
                    "textStyle": {"color": INK_SECONDARY, "fontSize": 12,
                                  "fontFamily": FONT}},
-        "grid": {"left": 16, "right": 30, "top": 112, "bottom": 106,
+        "grid": {"left": 16, "right": 30, "top": 112, "bottom": 58,
                  "containLabel": True},
         "xAxis": _cat_axis(win),
         "yAxis": _yaxis("元/盒"),
-        "dataZoom": [
-            {"type": "inside"},
-            {"type": "slider", "height": 18, "bottom": 55,
-             "showDetail": False,
-             "borderColor": "transparent", "backgroundColor": "#f4f3f0",
-             "fillerColor": "rgba(139,92,246,0.12)",
-             "textStyle": {"color": INK_MUTED, "fontSize": 11, "fontFamily": FONT}}],
+        # The full six-month window needs no separate slider below the axis.
+        "dataZoom": [{"type": "inside"}],
         "series": series,
     }
 
@@ -192,14 +187,21 @@ def structure(data: dict, product: str, month: str) -> dict:
                                  "fontFamily": FONT}},
         "series": [{
             "type": "pie", "top": 100, "bottom": 52, "left": 12, "right": 12,
-            "radius": ["48%", "82%"], "center": ["50%", "50%"],
-            "minShowLabelAngle": 10, "avoidLabelOverlap": True,
-            "labelLayout": {"hideOverlap": True},
-            "label": {"show": True, "position": "inside", "formatter": "{d}%", "color": SURFACE,
-                      "fontSize": 12, "fontWeight": 600, "fontFamily": FONT, "lineHeight": 16}, 
-            "labelLine": {"length": 10, "length2": 10,
+            # Leave room outside narrow sectors for complete, dark percentage labels.
+            "radius": ["44%", "70%"], "center": ["50%", "50%"],
+            "minShowLabelAngle": 0, "avoidLabelOverlap": True,
+            "labelLayout": {"hideOverlap": False},
+            "label": {"show": True, "position": "outside", "formatter": "{d}%", "color": INK_PRIMARY,
+                      "alignTo": "edge", "edgeDistance": 10, "distanceToLabelLine": 4,
+                      "fontSize": 12, "fontWeight": 600, "fontFamily": FONT, "lineHeight": 16},
+            "labelLine": {"show": True, "length": 12, "length2": 8,
                           "lineStyle": {"color": AXIS, "width": 1}},
             "data": items}],
+        # At phone widths, reserve real text width rather than silently ellipsizing percentages.
+        "media": [
+            {"query": {"maxWidth": 400}, "option": {"series": [{"radius": ["36%", "58%"]}]}},
+            {"query": {"minWidth": 401}, "option": {"series": [{"radius": ["44%", "70%"]}]}},
+        ],
     }
 
 
@@ -245,10 +247,19 @@ def waterfall(data: dict, product: str, month: str) -> dict:
     def _step_label(v, p):
         return f"{_fmt_amt(v)}元\n贡献{p:+.2f}%" if p is not None else f"{_fmt_amt(v)}元"
 
+    # ECharts stackStrategy='all' can propagate a missing ('-'/NaN) lower
+    # series into the next stack. Use finite, invisible zero-height layout
+    # placeholders, never display them as observations or clickable facts.
+    def _stack_gap():
+        return {"value": 0, "stack_gap": True,
+                "label": {"show": False}, "tooltip": {"show": False},
+                "itemStyle": {"opacity": 0},
+                "emphasis": {"disabled": True, "label": {"show": False}}}
+
     # 台阶数据点：带逐点标签（堆叠柱 label 位置随正负方向）
     def _step_point(name, v):
         if v == 0:
-            return "-"
+            return _stack_gap()
         pos = v > 0
         return {
             "value": abs(v),
@@ -264,62 +275,148 @@ def waterfall(data: dict, product: str, month: str) -> dict:
             },
         }
 
-    # y 轴量程：以"上月/本月值"为中心向两侧各留 3×最大|Δ|。
-    # 三要素变动全为 0 时 max|Δ|=0 会得到 min==max（退化区间，ECharts 渲染异常），
-    # 故取 max(|Δ|, 0.5×上月总成本×0.001+0.5) 兜底，保证量程恒为正值。
-    spread = max(abs(d_amt["材料"]), abs(d_amt["人工"]), abs(d_amt["制费"]),
-                 max(abs(prev_total) * 0.002, 0.5))
+    # This explicitly truncated axis emphasizes decomposition, not total magnitude.
+    # Three maximum steps also cover offsetting intermediate balances; the small
+    # floor keeps all-zero/unchanged inputs drawable without changing any value.
+    spread = max(*(abs(value) for value in d_amt.values()),
+                 max(abs(prev_total), abs(cur_total)) * 0.002, 0.5)
+    axis_min = round(min(prev_total, cur_total) - 3 * spread, 2)
+    axis_max = round(max(prev_total, cur_total) + 3 * spread, 2)
+
+    def _total_point(value, align, outer):
+        return {
+            "value": value,
+            "label": {"show": True, "position": "top" if value >= 0 else "bottom",
+                      "distance": 44 if outer else 8, "align": align,
+                      "formatter": f"{value:,.2f}\n元", "color": INK_PRIMARY,
+                      "fontSize": 11, "fontFamily": FONT, "fontWeight": 600,
+                      "lineHeight": 14},
+            "tooltip": {"formatter": f"{{b}}总成本 {value:,.2f} 元"},
+        }
 
     return {
         "title": {"text": "总成本变动分解",
                   "subtext": f"{month} · {product} · 合计 {_fmt_amt(a['总变动额'])} 元\n"
-                  + _source_subtext(months),
+                  + "Y 轴截断以突出变动量；数值仍为实际金额",
                   **_TITLE},
+        "aria": {"enabled": True, "description":
+                 f"{product} {month}，Y轴截断以突出变动量，柱长不可用于比较总额倍数。"
+                 + f"上月{prev_total:,.2f}元，本月{cur_total:,.2f}元。"
+                 + _source_subtext(months)},
         "tooltip": {**_TOOLTIP_BASE, "trigger": "item", "confine": True,
                     "formatter": "{b}: {c} 元"},
-        "grid": {"left": 50, "right": 24, "top": 112, "bottom": 30,
+        "grid": {"left": 20, "right": 16, "top": 112, "bottom": 30,
                  "containLabel": True},
         "xAxis": {**_cat_axis(cats), "axisLabel": {**_AXIS_LABEL, "interval": 0}},
         "media": [
             {"query": {"maxWidth": 500}, "option": {
                 "xAxis": {"data": ["上月", "材料", "人工", "制费", "本月"],
                           "axisLabel": {"interval": 0, "fontSize": 10}},
-                "series": [{"label": {"show": False}} for _ in range(4)]}},
+                "series": [{"label": {"show": False}} for _ in range(3)] +
+                          [{"label": {"show": True}}]}},
             {"query": {"minWidth": 501}, "option": {
                 "xAxis": {"data": cats, "axisLabel": {"interval": 0, "fontSize": 12}},
                 "series": [{"label": {"show": False}}] +
                           [{"label": {"show": True}} for _ in range(3)]}},
         ],
-        "yAxis": _yaxis("元") | {
-            "min": min(0, round(min(*endpoints, cur_total) - spread, 2)),
-            "max": round(max(*endpoints, cur_total) + spread, 2)},
+        "yAxis": _yaxis("元") | {"min": axis_min, "max": axis_max},
+        "accounting_source": {"row": "amount_change", "month": month,
+                              "previous_total": prev_total, "current_total": cur_total,
+                              "signed_changes": d_amt, "net_change": a['总变动额'],
+                              "contributions": pct, "axis_mode": "explicitly_truncated"},
         "series": [
             # series[0] 基底：透明垫高度（悬空台阶的起点）
-            {"name": "基底", "type": "bar", "stack": "wf", "stackStrategy": "samesign",
+            {"name": "基底", "type": "bar", "stack": "wf", "stackStrategy": "all",
              "itemStyle": {"color": "transparent"},
              "tooltip": {"show": False}, "label": {"show": False},
              "silent": True, "data": bases},
             # series[1] 增加：Δ>0 的要素柱（红=不利差异）
-            {"name": "增加（不利）", "type": "bar", "stack": "wf", "stackStrategy": "samesign",
+            {"name": "增加（不利）", "type": "bar", "stack": "wf", "stackStrategy": "all",
              "label": {"show": True},
              "itemStyle": {"color": POS_COLOR, "borderRadius": [4, 4, 0, 0]},
-             "data": ["-", _step_point("材料", d_amt["材料"]) if d_amt["材料"] > 0 else "-",
-                      _step_point("人工", d_amt["人工"]) if d_amt["人工"] > 0 else "-",
-                      _step_point("制费", d_amt["制费"]) if d_amt["制费"] > 0 else "-", "-"]},
+             "data": [_stack_gap(), _step_point("材料", d_amt["材料"]) if d_amt["材料"] > 0 else _stack_gap(),
+                      _step_point("人工", d_amt["人工"]) if d_amt["人工"] > 0 else _stack_gap(),
+                      _step_point("制费", d_amt["制费"]) if d_amt["制费"] > 0 else _stack_gap(), _stack_gap()]},
             # series[2] 减少：Δ<0 的要素柱（蓝=有利差异）
-            {"name": "减少（有利）", "type": "bar", "stack": "wf", "stackStrategy": "samesign",
+            {"name": "减少（有利）", "type": "bar", "stack": "wf", "stackStrategy": "all",
              "label": {"show": True},
              "itemStyle": {"color": NEG_COLOR, "borderRadius": [0, 0, 4, 4]},
-             "data": ["-", _step_point("材料", d_amt["材料"]) if d_amt["材料"] < 0 else "-",
-                      _step_point("人工", d_amt["人工"]) if d_amt["人工"] < 0 else "-",
-                      _step_point("制费", d_amt["制费"]) if d_amt["制费"] < 0 else "-", "-"]},
+             "data": [_stack_gap(), _step_point("材料", d_amt["材料"]) if d_amt["材料"] < 0 else _stack_gap(),
+                      _step_point("人工", d_amt["人工"]) if d_amt["人工"] < 0 else _stack_gap(),
+                      _step_point("制费", d_amt["制费"]) if d_amt["制费"] < 0 else _stack_gap(), _stack_gap()]},
             # series[3] 合计：上月基准柱 + 本月汇总柱（中性深灰）
-            {"name": "合计", "type": "bar", "stack": "wf", "stackStrategy": "samesign",
+            {"name": "合计", "type": "bar", "stack": "wf", "stackStrategy": "all",
+              "labelLayout": {"moveOverlap": "shiftY", "hideOverlap": False},
              "itemStyle": {"color": TOTAL_COLOR, "borderRadius": 3},
              "label": {"show": True, "position": "top",
                        "formatter": "{c}", "color": INK_PRIMARY,
                        "fontSize": 12, "fontFamily": FONT, "fontWeight": 600},
-             "data": [prev_total, "-", "-", "-", cur_total]},
+             "data": [_total_point(prev_total, "left", (prev_total >= 0) == (cur_total >= 0) and abs(prev_total) >= abs(cur_total)),
+                       _stack_gap(), _stack_gap(), _stack_gap(),
+                       _total_point(cur_total, "right", (prev_total >= 0) == (cur_total >= 0) and abs(cur_total) > abs(prev_total))]},
+        ],
+    }
+
+
+def change_detail(data: dict, product: str, month: str) -> dict:
+    """Signed change-only bars; NOT a cropped or rebased total-cost waterfall.
+
+    Values, net change and contributions are read from the very same canonical
+    amount_change row used by waterfall(). Starting/ending totals are metadata,
+    never drawn as tiny bars on the change-only axis. Every visible bar starts at
+    zero, including offsetting/negative contributions and the separate net bar.
+    """
+    a = next(row for row in data['amount_change'] if row['month'] == month)
+    index = next(i for i, row in enumerate(data['series']) if row['month'] == month)
+    if index == 0 or a['上月总成本'] is None:
+        raise ValueError(f'{month} 无连续上月，无法绘制差额放大视图')
+    elements = ('材料', '人工', '制费')
+    values = [a[element + '变动额'] for element in elements] + [a['总变动额']]
+    extent = max(max(abs(value) for value in values) * 1.25, 0.5)
+    categories = ['材料变动', '人工变动', '制费变动', '净变动']
+    points = []
+    for index, (name, value) in enumerate(zip(categories, values)):
+        contribution = a['贡献度'][elements[index]] if index < 3 else None
+        share = (f'贡献度 {contribution:+.2f}%' if contribution is not None
+                 else '贡献度无定义（净变动为零）') if index < 3 else '三要素金额变动净额'
+        points.append({
+            'value': value, 'signed_delta': value, 'contribution': contribution,
+            'itemStyle': {'color': TOTAL_COLOR if index == 3 else POS_COLOR if value > 0 else NEG_COLOR},
+            'tooltip': {'formatter': f'{month} · {product}<br/>{name} {value:+,.2f} 元<br/>{share}'},
+            'label': {'position': 'top' if value >= 0 else 'bottom',
+                      'formatter': f'{value:+,.2f}', 'color': INK_SECONDARY,
+                      'fontSize': 11, 'fontFamily': FONT},
+        })
+    return {
+        'title': {'text': '差额放大视图',
+                  'subtext': f'{month} · {product}\n仅显示差额（元），起止总额另列', **_TITLE},
+        'tooltip': {**_TOOLTIP_BASE, 'trigger': 'item', 'confine': True},
+        'grid': {'left': 24, 'right': 24, 'top': 112, 'bottom': 38, 'containLabel': True},
+        'xAxis': {**_cat_axis(categories), 'axisLine': {**_AXIS_LINE, 'onZero': False},
+                  'axisLabel': {**_AXIS_LABEL, 'interval': 0, 'margin': 16}},
+        'yAxis': _yaxis('元') | {'min': -extent, 'max': extent},
+        'accounting_source': {'row': 'amount_change', 'month': month,
+                              'previous_total': a['上月总成本'], 'current_total': a['本月总成本'],
+                              'signed_changes': {element: a[element + '变动额'] for element in elements},
+                              'net_change': a['总变动额'], 'contributions': a['贡献度'],
+                              'axis_mode': 'zero_based_changes'},
+        'aria': {'enabled': True, 'description':
+                 f'{product} {month} 差额放大视图，所有柱从零开始，起止总额另列。'
+                 + '；'.join(f'{name}{value:+,.2f}元' for name, value in zip(categories, values))
+                 + f"。上月总成本{a['上月总成本']:,.2f}元，本月总成本{a['本月总成本']:,.2f}元。"},
+        'series': [{'name': '金额变动（元）', 'type': 'bar', 'barMaxWidth': 64,
+                    'label': {'show': True}, 'data': points,
+                    'markLine': {'silent': True, 'symbol': 'none', 'label': {'show': False},
+                                 'lineStyle': {'color': INK_MUTED, 'width': 1},
+                                 'data': [{'yAxis': 0}]}}],
+        'media': [
+            {'query': {'maxWidth': 500}, 'option': {
+                'xAxis': {'data': ['材料', '人工', '制费', '净变动'],
+                          'axisLabel': {'fontSize': 10, 'interval': 0}},
+                'series': [{'label': {'show': False}}]}},
+            {'query': {'minWidth': 501}, 'option': {
+                'xAxis': {'data': categories, 'axisLabel': {'fontSize': 12, 'interval': 0}},
+                'series': [{'label': {'show': True}}]}},
         ],
     }
 
@@ -410,7 +507,7 @@ def trend_elements(data: dict, product: str, months: list) -> dict:
             v = (by_m.get(m) or {}).get(label)
             if j == len(win) - 1 and v is not None:
                 data_pts.append({"value": v, "label": {
-                    "show": True, "position": "top", "distance": 8,
+                    "show": True, "position": "bottom" if label == "人工" else "top", "distance": 8,
                     "formatter": f"{v:.2f}", "color": INK_SECONDARY,
                     "fontSize": 11, "fontFamily": FONT}})
             else:
@@ -434,17 +531,12 @@ def trend_elements(data: dict, product: str, months: list) -> dict:
                    "itemWidth": 8, "itemHeight": 8, "itemGap": 18,
                    "textStyle": {"color": INK_SECONDARY, "fontSize": 12,
                                  "fontFamily": FONT}},
-        "grid": {"left": 16, "right": 30, "top": 112, "bottom": 106,
+        "grid": {"left": 16, "right": 30, "top": 112, "bottom": 58,
                  "containLabel": True},
         "xAxis": _cat_axis(win),
         "yAxis": _yaxis("元/盒"),
-        "dataZoom": [
-            {"type": "inside"},
-            {"type": "slider", "height": 18, "bottom": 55,
-             "showDetail": False,
-             "borderColor": "transparent", "backgroundColor": "#f4f3f0",
-             "fillerColor": "rgba(82,81,78,0.12)",
-             "textStyle": {"color": INK_MUTED, "fontSize": 11, "fontFamily": FONT}}],
+        # Keep touch/wheel zoom without a mostly empty miniature chart strip.
+        "dataZoom": [{"type": "inside"}],
         "series": series,
     }
 
@@ -537,5 +629,40 @@ def heatmap_rate(d: dict, product: str, months: list, rate: str = "mom") -> dict
                                   "borderRadius": 2},
                     "emphasis": {"itemStyle": {"borderColor": INK_PRIMARY,
                                                "borderWidth": 2}}}],
+    }
+
+
+def industry_radar(result):
+    """Build a reference-vs-observed radar; values are P50-normalised, not scores."""
+    radar = (result or {}).get('radar') or {}
+    axes = radar.get('axes') or []
+    if not radar.get('available') or not axes:
+        raise ValueError('行业基准不足三个可比轴，无法绘制雷达图')
+    labels = [axis['name'] for axis in axes]
+    values = [value for item in radar.get('series', []) for value in item.get('values', [])]
+    maximum = max(160, max(values, default=100) * 1.15)
+    series = []
+    for item in radar.get('series', []):
+        series.append({'name': item['name'], 'type': 'radar',
+                       'data': [{'value': item['values'], 'name': item['name']}],
+                       'symbol': 'circle', 'symbolSize': 5,
+                       'lineStyle': {'width': 2},
+                       'areaStyle': {'opacity': 0.08 if item.get('kind') == 'reference' else 0.16}})
+    return {
+        'animation': False,
+        'title': {'text': '行业基准与本厂月度观测',
+                  'subtext': '行业 P50=100；仅作参照，不是百分位或优劣评分',
+                  'left': 'center', 'top': 10,
+                  'textStyle': {'fontSize': 16}, 'subtextStyle': {'fontSize': 11}},
+        'tooltip': {'trigger': 'item', 'confine': True},
+        'legend': {'type': 'scroll', 'bottom': 4, 'left': 'center'},
+        'radar': {'center': ['50%', '52%'], 'radius': '62%',
+                  'indicator': [{'name': label, 'min': 0, 'max': maximum} for label in labels],
+                  'axisName': {'color': INK_SECONDARY, 'fontSize': 11},
+                  'splitArea': {'areaStyle': {'color': ['#ffffff', '#f7fafc']}},
+                  'splitLine': {'lineStyle': {'color': GRID}},
+                  'axisLine': {'lineStyle': {'color': AXIS}}},
+        'series': series,
+        'media': [{'query': {'maxWidth': 500}, 'option': {'radar': {'radius': '54%'}}}],
     }
 #（注：内容由AI生成）

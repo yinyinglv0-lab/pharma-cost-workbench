@@ -28,6 +28,13 @@ services:
       COST_DATA_DIR: /var/lib/project4/data
       COST_MANAGED_DIR: /var/lib/project4/managed
       COST_LLM_CONFIG_FILE: /var/lib/project4-private/llm.json
+      DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY:-}
+      DASHSCOPE_APPROVED_CLOUD: ${DASHSCOPE_APPROVED_CLOUD:-false}
+      DASHSCOPE_BASE_URL: ${DASHSCOPE_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      DEEPSEEK_APPROVED_CLOUD: ${DEEPSEEK_APPROVED_CLOUD:-false}
+      DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-https://api.deepseek.com/v1}
+      DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-flash}
       COST_API_BASE: http://127.0.0.1:8000
       COST_OIDC_ISSUER: ${COST_OIDC_ISSUER:?Set an approved HTTPS OIDC issuer}
       COST_OIDC_AUDIENCE: ${COST_OIDC_AUDIENCE:?Set the API token audience}

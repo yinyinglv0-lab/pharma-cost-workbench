@@ -229,11 +229,73 @@ def discover_months(d=None):
     return sorted(df["月份"].unique())
 
 
-def material_detail_series(product, d=None):
+def _scope_product_tables(d, product, specification=None):
+    """Select one product/specification before any comparison or drill-down.
+
+    Missing specification columns are accepted only for legacy inputs whose
+    primary cost table also has no specification. An explicitly scoped product
+    must never borrow an unlabelled or different-spec counterpart.
+    """
+    primary = d.get('cost26')
+    candidates = primary if primary is not None else next(
+        (frame for frame in d.values() if frame is not None and not frame.empty), pd.DataFrame())
+    if '产品名称' in candidates:
+        candidates = candidates.loc[candidates['产品名称'].eq(product)]
+    else:
+        candidates = candidates.iloc[0:0]
+    has_spec = '产品规格' in candidates
+    values = candidates['产品规格'] if has_spec else pd.Series(dtype=object)
+    valid = values.notna() & values.astype(str).str.strip().ne('')
+    choices = list(pd.unique(values.loc[valid]))
+    if specification is None:
+        if len(choices) > 1:
+            raise ValueError(f'{product}存在多个产品规格，请显式提供 specification；不得混算')
+        if has_spec and not candidates.empty and not valid.all():
+            raise ValueError(f'{product}存在未标明产品规格的成本数据，无法确定分析口径')
+        selected = choices[0] if choices else None
+    else:
+        if not isinstance(specification, str) or not specification.strip():
+            raise ValueError('specification须为非空产品规格')
+        if not has_spec or specification not in choices:
+            raise ValueError(f'{product}的产品规格 {specification} 无当期成本数据')
+        selected = specification
+    scoped = {}
+    for key, frame in d.items():
+        if frame is None:
+            scoped[key] = pd.DataFrame()
+            continue
+        if frame.empty or '产品名称' not in frame:
+            scoped[key] = frame.iloc[0:0].copy()
+            continue
+        mask = frame['产品名称'].eq(product)
+        if selected is not None:
+            mask &= frame['产品规格'].eq(selected) if '产品规格' in frame else False
+        elif '产品规格' in frame:
+            # An unlabelled legacy primary cannot prove a labelled counterpart
+            # applies to it, even when that counterpart happens to occur first.
+            mask &= frame['产品规格'].isna() | frame['产品规格'].astype(str).str.strip().eq('')
+        scoped[key] = frame.loc[mask].copy()
+    return scoped, selected
+
+
+def _row_source(row):
+    """Keep physical source identity; never turn a DataFrame index into a row."""
+    fields = ('工厂', '产品名称', '产品规格', '月份', '_source_file', '_source_hash',
+              '_source_row', '_source_sheet', '_source_revision', '_source_version')
+    result = {}
+    for key in fields:
+        if key in row and pd.notna(row[key]):
+            value = row[key]
+            result[key] = value.item() if hasattr(value, 'item') else value
+    return result
+
+
+def material_detail_series(product, d=None, *, specification=None):
     """原材料消耗逐月序列（5.2.3 归因下钻到原料级的输入）。"""
     if d is None:
         d = load_cost_data()
-    df = d["material"]
+    d, _ = _scope_product_tables(d, product, specification)
+    df = d.get("material")
     if df is None or df.empty or "产品名称" not in df.columns:
         return []
     sub = df[df["产品名称"] == product].sort_values("月份")
@@ -243,16 +305,17 @@ def material_detail_series(product, d=None):
                        "materials": [{"name": r["原材料名称"],
                                       "unit_cost": r["单位消耗成本(元/盒)"],
                                       "total_cost": r["原材料总成本(元)"],
-                                      "pct": r["占总材料成本比例"]}
+                                      "pct": r["占总材料成本比例"], "source": _row_source(r)}
                                      for _, r in grp.iterrows()]})
     return series
 
 
-def labor_metrics_series(product, d=None):
+def labor_metrics_series(product, d=None, *, specification=None):
     """人工工时/时薪/效率逐月序列。"""
     if d is None:
         d = load_cost_data()
-    df = d["labor"]
+    d, _ = _scope_product_tables(d, product, specification)
+    df = d.get("labor")
     if df is None or df.empty or "产品名称" not in df.columns:
         return []
     sub = df[df["产品名称"] == product].sort_values("月份")
@@ -265,15 +328,17 @@ def labor_metrics_series(product, d=None):
                        "workdays": r["工作天数(天)"],
                        "labor_per_box": round(r["直接人工总额(元)"] / r["产量(盒)"], 6),
                        "wage_rate": round(r["直接人工总额(元)"] / r["总工时(小时)"], 6),
-                       "efficiency": round(r["产量(盒)"] / (r["生产人数(人)"] * r["工作天数(天)"]), 6)})
+                       "efficiency": round(r["产量(盒)"] / (r["生产人数(人)"] * r["工作天数(天)"]), 6),
+                       "source": _row_source(r)})
     return series
 
 
-def mfg_breakdown_series(product, d=None):
+def mfg_breakdown_series(product, d=None, *, specification=None):
     """制造费用五类逐月序列。"""
     if d is None:
         d = load_cost_data()
-    df = d["mfg"]
+    d, _ = _scope_product_tables(d, product, specification)
+    df = d.get("mfg")
     if df is None or df.empty or "产品名称" not in df.columns:
         return []
     sub = df[df["产品名称"] == product].sort_values("月份")
@@ -282,7 +347,7 @@ def mfg_breakdown_series(product, d=None):
         series.append({"month": month,
                        "items": [{"category": r["费用类别"],
                                   "unit_cost": r["单位费用(元/盒)"],
-                                  "total_cost": r["费用总额(元)"]}
+                                  "total_cost": r["费用总额(元)"], "source": _row_source(r)}
                                  for _, r in grp.iterrows()]})
     return series
 
@@ -386,13 +451,24 @@ def build_attribution_summary(data, month=None):
     return headline + "；".join(parts) + "。" + note + "金额变动包含单位成本及产量共同影响，具体原因待核查。"
 
 
-def build_dashboard_data(product, d=None):
-    """产品级看板数据：{series, mom, yoy, budget_var, contribution, warnings}"""
+def build_dashboard_data(product, d=None, *, specification=None):
+    """同产品同规格看板；多规格未选时拒绝，缺对照时不借其它规格。
+
+    Source units remain 元/盒 and 盒; adding products does not establish a
+    conversion to pieces, kilograms or another production unit.
+    """
     if d is None:
         d = load_cost_data()
+    d, specification = _scope_product_tables(d, product, specification)
     df = d["cost26"]
     sub = df[df["产品名称"] == product].sort_values("月份").reset_index(drop=True)
+    if sub['月份'].duplicated().any():
+        raise ValueError(f'{product}同一规格同月存在多条成本记录，不能按首行或跨工厂混算')
     warnings = []
+    source_rows = [{"month": r['月份'], "current": _row_source(r),
+                    "previous": (_row_source(sub.iloc[i - 1])
+                                 if i and _previous_month_note(r, sub.iloc[i - 1]) is None else None),
+                    "yoy": None, "budget": None} for i, r in sub.iterrows()]
 
     series = []
     for _, r in sub.iterrows():
@@ -423,16 +499,17 @@ def build_dashboard_data(product, d=None):
     yoy = []
     df25 = pd.concat([d['cost25'], d['cost26']], ignore_index=True)
     has25 = (not df25.empty) and "产品名称" in df25.columns
-    for _, r in sub.iterrows():
+    for i, r in sub.iterrows():
         row = {"month": r["月份"]}
         m25 = f"{int(r['月份'][:4]) - 1:04d}{r['月份'][4:]}"
         p25 = df25[(df25["产品名称"] == product) & (df25["月份"] == m25)] if has25 \
             else pd.DataFrame()
-        if p25.empty:
+        if len(p25) != 1:
             row.update({ELEMENT_LABELS[c]: None for c in ELEMENTS})
-            row["_note"] = "去年同月无数据"
+            row["_note"] = "去年同月无同规格数据" if p25.empty else "去年同月同规格对照不唯一"
         else:
             r25 = p25.iloc[0]
+            source_rows[i]['yoy'] = _row_source(r25)
             for c in ELEMENTS:
                 v = _mom(r[c], r25[c])
                 row[ELEMENT_LABELS[c]] = round(v, 6) if v is not None else None
@@ -442,16 +519,17 @@ def build_dashboard_data(product, d=None):
     budget_var = []
     bd = d["budget"]
     has_bd = (not bd.empty) and "产品名称" in bd.columns
-    for _, r in sub.iterrows():
+    for i, r in sub.iterrows():
         row = {"month": r["月份"]}
         b = bd[(bd["产品名称"] == product) & (bd["月份"] == r["月份"])] if has_bd \
             else pd.DataFrame()
-        if b.empty:
+        if len(b) != 1:
             row.update({ELEMENT_LABELS[c]: None for c in ELEMENTS})
-            row["_note"] = "预算数据缺失"
+            row["_note"] = "同规格预算数据缺失" if b.empty else "同规格预算对照不唯一"
             budget_var.append(row)
             continue
         b = b.iloc[0]
+        source_rows[i]['budget'] = _row_source(b)
         bcol = {"直接材料(元/盒)": "预算直接材料(元/盒)",
                 "直接人工(元/盒)": "预算直接人工(元/盒)",
                 "制造费用(元/盒)": "预算制造费用(元/盒)",
@@ -481,7 +559,11 @@ def build_dashboard_data(product, d=None):
         if amount.get("勾稽差额"):
             warnings.append(f"{product} {r['月份']} {amount['_note']}，差额{amount['勾稽差额']:.2f}元")
 
-    return {"product": product, "series": series, "mom": mom, "yoy": yoy,
+    return {"product": product, "specification": specification,
+            "source_rows": source_rows,
+            "quantity_unit": "盒", "unit_cost_unit": "元/盒",
+            "quantity_unit_boundary": "仅使用源表盒口径；新增产品不代表支持粒、支、kg等单位或自动换算",
+            "series": series, "mom": mom, "yoy": yoy,
             "budget_var": budget_var, "contribution": contribution,
             "contribution_raw": contribution_raw,
             "amount_change": amount_change, "warnings": warnings}

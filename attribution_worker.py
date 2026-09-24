@@ -43,12 +43,14 @@ def main(argv: list[str]) -> int:
             result = rag_evidence(args['query'], int(args.get('top_k', 4)))
         elif stage == 'model':
             from attribution_gen import _llm_generate
+            from attribution_runtime import resolve_worker_configuration
+            config = resolve_worker_configuration(args.get('_model_identity'))
             def record_attempts(value):
                 audit.clear()
                 audit.update(value)
                 _write(output_path, {'ok': False, 'error_type': 'InProgress', 'model_run': value})
             result = _llm_generate(args['payload'], args.get('evidence', []),
-                                   deadline=args.get('_deadline'), attempt_recorder=record_attempts)
+                                   deadline=args.get('_deadline'), attempt_recorder=record_attempts, config=config)
         else:
             raise ValueError('unsupported stage')
         _write(output_path, {'ok': True, 'result': result})

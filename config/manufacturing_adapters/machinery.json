@@ -1,0 +1,43 @@
+{
+  "schema_version": "manufacturing-adapter/1",
+  "id": "machinery-starter",
+  "version": "1.0.0",
+  "industry": "machinery",
+  "label": "机械制造列映射模板（未接入真实企业数据）",
+  "status": "template",
+  "columns": {
+    "factory": "工厂",
+    "product": "产品编码",
+    "specification": "规格版本",
+    "month": "会计月份",
+    "material": "单位直接材料",
+    "labor": "单位直接人工",
+    "overhead": "单位制造费用",
+    "unitcost": "单位成本",
+    "output": "完工产量",
+    "total": "总成本"
+  },
+  "currency": {
+    "source_column": "币种",
+    "target": "CNY",
+    "rates": [{"source": "CNY", "factor": "1"}]
+  },
+  "units": {
+    "quantity_column": "产量单位",
+    "cost_denominator_column": "单位成本分母单位",
+    "conversions": [
+      {"source": "piece", "target": "piece", "factor": "1"},
+      {"source": "kg", "target": "kg", "factor": "1"},
+      {"source": "g", "target": "kg", "factor": "0.001"},
+      {"source": "t", "target": "kg", "factor": "1000"}
+    ]
+  },
+  "factories": [],
+  "product_units": [],
+  "limitations": [
+    "仅为列映射和计量约定模板，不含真实工厂、产品、测量值或行业基准。",
+    "服务端运维须根据已确认源表绑定工厂及产品规格单位后才能改为active；配置不授予任何权限。",
+    "piece与kg不可互换；BOM、工时、设备、在制品和成本分摊须另行确认，不由本适配器推断。",
+    "切换本配置不等于完成看板、归因、对标、导入或路由的端到端跨行业迁移。"
+  ]
+}

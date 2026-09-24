@@ -49,7 +49,9 @@ def _load_market():
         frame = pd.read_csv(path)
     except (OSError, ValueError):
         frame = pd.DataFrame()
-    frame.attrs.update(source_file=str(path), year=2026)
+    from hashlib import sha256
+    frame['_source_row'] = list(range(2, len(frame)+2))
+    frame.attrs.update(source_file=str(path), source_hash=sha256(path.read_bytes()).hexdigest() if path.is_file() else None, year=2026)
     return frame
 
 
@@ -74,7 +76,10 @@ def _market_pair(frame, name, previous, current):
     prices = [_d(row.get(col)) for col in cols]
     if any(p is None or p <= 0 for p in prices):
         return None, '缺少两期有效正市场单价'
-    sources = [{'file': frame.attrs.get('source_file'),
+    sources = [{'table': 'market', 'file': frame.attrs.get('source_file'),
+                'sha256': frame.attrs.get('source_hash'),
+                'record_number': int(row['_source_row']) if pd.notna(row.get('_source_row')) else None,
+                'sheet': 'CSV' if frame.attrs.get('source_file') else None,
                 'key': {'药材名称': name, '规格等级': str(row.get('规格等级', '未提供')),
                         '月份': month, '价格字段': col, '单位': '元/kg',
                         '价格来源': str(row.get('价格来源', '未提供'))},
@@ -139,6 +144,8 @@ def build_decomposition(facts, market=None):
                 'importance_amount_threshold': None,
                 'unmatched_materials': [], 'market_sources': [], 'evidence': [],
             }
+            if name == '人工':
+                entry['labor_factors'] = element.get('labor_factors', {'available': False, 'reason': '人工工时明细缺失'})
             result[name] = entry
             if name != '材料':
                 continue
@@ -185,6 +192,7 @@ def build_decomposition(facts, market=None):
                     'reference_price_before': _f(p0), 'reference_price_after': _f(p1), 'price_unit': '元/kg',
                     'reference_usage_before': _f(u0), 'reference_usage_after': _f(u1), 'usage_unit': 'kg/盒（参考折算）',
                     'price_change_pct': _f((p1-p0)/p0*100),
+                    'price_change_pct_exact': str((p1-p0)/p0*100),
                     'usage_change_pct': _f((u1-u0)/u0*100) if u0 else None,
                     'price_usage_driver': _driver(price_part, usage_part, 'price', 'usage'),
                     'decomposition_basis': BASIS,
@@ -200,8 +208,8 @@ def build_decomposition(facts, market=None):
                 entry['market_sources'].extend(material['market_sources'])
                 entry['evidence'].append({
                     'id': ident,
-                    'text': f"{material['name']}市场参考价{material['reference_price_before']}→{material['reference_price_after']}元/kg，"
-                            f"参考价格影响{material['price_effect']}元，参考折算单耗影响{material['usage_effect']}元。{BASIS}",
+                    'text': f"{material['name']}市场参考价{material['reference_price_before']}→{material['reference_price_after']}元/kg。"
+                            '该报价来自外部市场，不能证明本厂采购结算价或实物耗用变化。',
                     'source': {'table': 'market', 'file': None, 'key': {'药材名称': material['name']},
                                'records': material['market_sources'], 'note': BASIS},
                 })

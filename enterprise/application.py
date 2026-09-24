@@ -37,28 +37,63 @@ class Application:
             raise ValueError('当前授权数据校验失败：' + '；'.join(errors[:10]))
         return result
 
-    def report_tables(self):
-        """Add only relevant market-reference rows to the authorized cost snapshot."""
+    def report_tables(self, *, legacy_reference_replay=False):
+        """Return authorized costs; released typed evidence supplies market references.
+
+        The explicit legacy flag is for trusted Python historical-input replay
+        only, never a UI/API/report parameter. It preserves the old source and
+        data-hash contract without reopening raw CSV references in new reports.
+        Frozen payload export does not use this method or require the flag.
+        """
         require(self.principal, 'report.generate')
+        if type(legacy_reference_replay) is not bool:
+            raise ValueError('legacy_reference_replay须为布尔值，仅供可信历史回放')
         data = self.tables()
-        from paths import DATA_DIR
         import pandas as pd
-        import hashlib
-        market = DATA_DIR / '药材市场价格行情_2026年上半年.csv'
-        frame = pd.read_csv(market) if market.is_file() else pd.DataFrame()
-        if not frame.empty:
-            frame['_source_file'] = str(market.resolve())
-            frame['_source_hash'] = hashlib.sha256(market.read_bytes()).hexdigest()
-            frame['_source_row'] = list(range(2, len(frame)+2))
-            frame['_source_sheet'] = 'CSV'
-            frame.attrs.update(source_file=str(market.resolve()), year=2026)
-            materials = data.get('material', pd.DataFrame())
-            names = set(materials['原材料名称']) if '原材料名称' in materials else set()
-            if '*' not in self.principal.products:
-                frame = frame.loc[frame['药材名称'].isin(names)].copy()
+        frame = pd.DataFrame()
+        if legacy_reference_replay:
+            from paths import DATA_DIR
+            import hashlib
+            market = DATA_DIR / '药材市场价格行情_2026年上半年.csv'
+            frame = pd.read_csv(market) if market.is_file() else pd.DataFrame()
+            if not frame.empty:
+                frame['_source_file'] = str(market.resolve())
+                frame['_source_hash'] = hashlib.sha256(market.read_bytes()).hexdigest()
+                frame['_source_row'] = list(range(2, len(frame)+2))
+                frame['_source_sheet'] = 'CSV'
+                frame.attrs.update(source_file=str(market.resolve()), year=2026)
+                materials = data.get('material', pd.DataFrame())
+                names = set(materials['原材料名称']) if '原材料名称' in materials else set()
+                if '*' not in self.principal.products:
+                    frame = frame.loc[frame['药材名称'].isin(names)].copy()
         data['market'] = frame
         data['cost26_2'] = data.get('erchang26', pd.DataFrame())
         return data
+
+    def forecast(self, *, factory, product, specification, cutoff_month, method='naive'):
+        """Read a single authorized revision and calculate a bounded next-month baseline."""
+        require(self.principal, 'analysis.generate', factory=factory, product=product)
+        require(self.principal, 'data.read', factory=factory, product=product)
+        return self._forecast_from_tables(self.tables(), factory=factory, product=product,
+                                          specification=specification, cutoff_month=cutoff_month, method=method)
+
+    def _forecast_from_tables(self, tables, *, factory, product, specification, cutoff_month, method='naive'):
+        """Internal adapter for an authorized request snapshot; never an HTTP input."""
+        require(self.principal, 'analysis.generate', factory=factory, product=product)
+        require(self.principal, 'data.read', factory=factory, product=product)
+        from enterprise.forecast import forecast_baseline
+        snapshots = {(frame.attrs.get('cost_revision'), frame.attrs.get('cost_snapshot_hash'))
+                     for frame in tables.values() if not frame.empty}
+        if len(snapshots) != 1:
+            raise ValueError('预测输入缺少一致的已授权数据快照')
+        revision, snapshot_hash = next(iter(snapshots))
+        if (not isinstance(revision, int) or isinstance(revision, bool) or revision < 0
+                or not isinstance(snapshot_hash, str) or not snapshot_hash.strip()):
+            raise ValueError('预测输入缺少一致的已授权数据快照')
+        return forecast_baseline(tables, factory=factory, product=product, specification=specification,
+                                 cutoff_month=cutoff_month, method=method,
+                                 snapshot_meta={'cost_revision': revision, 'cost_snapshot_hash': snapshot_hash,
+                                                'knowledge_status': 'not_used', 'forecast_status': 'baseline_not_budget'})
 
     def current(self):
         require(self.principal, 'data.read')
@@ -170,3 +205,8 @@ class Application:
     def tasks(self):
         from enterprise.task_workflow import TaskRepository
         return TaskRepository(self.root)
+
+    def manufacturing(self):
+        """Use the same authenticated application scope, not a parallel identity."""
+        from enterprise.manufacturing_service import ManufacturingService
+        return ManufacturingService(self.root, self.principal)

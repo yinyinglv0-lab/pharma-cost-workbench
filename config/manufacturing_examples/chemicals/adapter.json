@@ -1,0 +1,41 @@
+{
+  "schema_version": "manufacturing-adapter/2",
+  "id": "simulation_chemicals_adapter",
+  "version": "1.0.0",
+  "industry": "chemicals",
+  "label": "SIMULATION Chemicals identity adapter",
+  "status": "active",
+  "columns": {
+    "factory": "factory",
+    "product": "product",
+    "specification": "specification",
+    "month": "month",
+    "material": "material",
+    "labor": "labor",
+    "overhead": "overhead",
+    "unitcost": "unitcost",
+    "output": "output",
+    "total": "total"
+  },
+  "currency": {
+    "source_column": "currency",
+    "target": "CNY",
+    "rates": [{"source": "CNY", "factor": "1"}]
+  },
+  "units": {
+    "quantity_column": "quantity_unit",
+    "cost_denominator_column": "cost_denominator_unit",
+    "conversions": [{"source": "kg", "target": "kg", "factor": "1"}]
+  },
+  "factories": ["SIMULATION Chemicals Home Factory", "SIMULATION Chemicals Peer Factory"],
+  "product_units": [
+    {"product": "SIMULATION Epoxy Resin", "specification": "SIM-RESIN-E100", "unit": "kg"},
+    {"product": "SIMULATION Acrylic Resin", "specification": "SIM-RESIN-A200", "unit": "kg"}
+  ],
+  "limitations": [
+    "SIMULATION data only; active status does not confer production approval or access permissions.",
+    "Exact identity mappings only: CNY to CNY and kg to kg each have explicit factor 1; no currency lookup, mass-to-volume conversion or inferred aliases.",
+    "Factory, product and SIM-prefixed specification labels are synthetic and must match exactly.",
+    "Reference BOM quantities and knowledge ranges are not actual observations or confirmed operational causes."
+  ]
+}

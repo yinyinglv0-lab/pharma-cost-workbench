@@ -65,7 +65,11 @@ def _source(table, row, extra_key=None):
     line = int(line) if filename and line is not None and line > 0 and line == int(line) else None
     record = _dec(row.get('_source_row'))
     record = int(record) if record is not None and record > 0 and record == int(record) else None
-    return {'table':table,'key':key,'file':filename,'line':line,'record_number':record,
+    fields = {name: str(row[name]) for name in ('产量(盒)', '单位成本(元/盒)', '总成本(元)',
+              *ELEMENT_COLUMNS.values(), '单位消耗成本(元/盒)', '原材料总成本(元)',
+              '直接人工总额(元)', '总工时(小时)', '生产人数(人)', '工作天数(天)',
+              '单位费用(元/盒)', '费用总额(元)') if name in row and pd.notna(row[name])}
+    return {'table':table,'key':key,'file':filename,'line':line,'record_number':record, 'fields': fields,
             'sheet':str(row['_source_sheet']) if pd.notna(row.get('_source_sheet')) else None,
             'sha256':str(row['_source_hash']) if pd.notna(row.get('_source_hash')) else None,
             'note':('导入记录序号（含表头），不是推断的物理行号' if record else '显式来源元数据' if filename else '合并后数据表/主键定位；未提供原始文件行号')}
@@ -94,6 +98,47 @@ def _change(before, after):
     if before is None or after is None:
         return None
     return float(after - before)
+
+
+def labor_factor_bridge(amount_before, amount_after, hours_before, hours_after,
+                        volume_before=None, volume_after=None):
+    """Exact sequential H×(L/H) and (H/Q)×(L/H) bridges, never employee pay rates.
+
+    Reusable for monthly or aggregated periods: sum amount/hours/output first.
+    A missing or zero denominator stays unavailable; no zero or efficiency claim
+    is invented. ``exact`` preserves Decimal results alongside JSON numbers.
+    """
+    a0, a1, h0, h1, q0, q1 = map(_dec, (amount_before, amount_after, hours_before,
+                                      hours_after, volume_before, volume_after))
+    result = {'available': False, 'reason': None,
+              'basis': '归集人工总额=总工时×归集人工费用/小时；不是个人工资或合同工资率',
+              'formula': 'hours=(H1-H0)*(L0/H0); rate=H1*(L1/H1-L0/H0)',
+              'unit_formula': 'hours_per_box=(H1/Q1-H0/Q0)*(L0/H0); rate=(H1/Q1)*(L1/H1-L0/H0)'}
+    if any(v is None or v < 0 for v in (a0, a1, h0, h1)) or not h0 or not h1:
+        return {**result, 'reason': '缺少两期有效人工总额或正总工时，不能拆分工时与小时归集费用'}
+    with localcontext() as ctx:
+        ctx.prec = 60
+        r0, r1 = a0 / h0, a1 / h1
+        values = {'amount_before': a0, 'amount_after': a1, 'amount_delta': a1-a0,
+                  'hours_before': h0, 'hours_after': h1, 'hours_delta': h1-h0,
+                  'cost_per_hour_before': r0, 'cost_per_hour_after': r1,
+                  'hours_effect': (h1-h0)*r0, 'rate_effect': h1*(r1-r0),
+                  'cost_per_hour_change_pct': (r1-r0)/r0*100 if r0 else None}
+        values['reconciliation_difference'] = a1-a0-values['hours_effect']-values['rate_effect']
+        unit_available = all(v is not None and v > 0 for v in (q0, q1))
+        if unit_available:
+            u0, u1 = h0/q0, h1/q1
+            values.update({'volume_before': q0, 'volume_after': q1,
+                           'hours_per_box_before': u0, 'hours_per_box_after': u1,
+                           'hours_per_box_change_pct': (u1-u0)/u0*100,
+                           'output_per_hour_before': q0/h0, 'output_per_hour_after': q1/h1,
+                           'output_per_hour_change_pct': ((q1/h1)/(q0/h0)-1)*100,
+                           'unit_hours_effect': (u1-u0)*r0, 'unit_rate_effect': u1*(r1-r0),
+                           'unit_cost_delta': a1/q1-a0/q0})
+            values['unit_reconciliation_difference'] = values['unit_cost_delta']-values['unit_hours_effect']-values['unit_rate_effect']
+        return {**result, 'available': True, 'unit_available': unit_available,
+                **{key: _num(value) for key, value in values.items()},
+                'exact': {key: str(value) if value is not None else None for key, value in values.items()}}
 
 
 def _detail(table, rows, before_month, after_month):
@@ -241,6 +286,16 @@ def build_facts(data, product, month, d):
                 detail_rows = _rows(d.get(table), product, [previous_month, month], table)
                 _scope(detail_rows, table, scope)
                 unit["detail"] = _detail(table, detail_rows, previous_month, month)
+                for detail in unit['detail']:
+                    u0, u1 = _dec(detail['unit_before']), _dec(detail['unit_after'])
+                    detail['volume_effect'] = _num((q1-q0)*u0) if u0 is not None else None
+                    detail['unit_effect'] = _num(q1*(u1-u0)) if u0 is not None and u1 is not None else None
+                    detail['effect_reconciliation_difference'] = (
+                        _num(_dec(detail['amount_delta'])-(q1-q0)*u0-q1*(u1-u0))
+                        if detail['amount_delta'] is not None and u0 is not None and u1 is not None else None)
+                    if detail['effect_reconciliation_difference'] is not None and abs(detail['effect_reconciliation_difference']) > .01:
+                        detail['volume_effect'] = detail['unit_effect'] = None
+                        result['warnings'].append(f"{label}/{detail['name']}明细金额与汇总产量口径不闭合，未采用其量与单位成本分解")
                 if not unit["detail"]:
                     result["warnings"].append(f"{label}明细缺失，不能推断具体业务原因")
                 unit["evidence_ids"] = [evidence(
@@ -255,12 +310,35 @@ def build_facts(data, product, month, d):
                         f"{label}/{detail['name']}：单位成本{detail['unit_before']}→{detail['unit_after']}元/盒；"
                         f"金额{detail['amount_before']}→{detail['amount_after']}元，"
                         f"金额差{detail['amount_delta']}元；{detail['unit_semantics']}。"
-                        f"状态{detail['status']}，缺失不能视为零。",
+                        f"按汇总产量桥接的产量影响{detail['volume_effect']}元、单位成本影响{detail['unit_effect']}元。"
+                         f"状态{detail['status']}，缺失不能视为零。",
                         {"table": table, "key": {"产品名称": product, "明细": detail["name"],
                          "月份": [previous_month, month]}, "file": None, "line": None,
                          "note": "明细前后两条记录", "records": [detail["source_before"], detail["source_after"]]})
                     detail["evidence_id"] = ident
                     unit["evidence_ids"].append(ident)
+                if label == '人工':
+                    labor = unit['detail'][0] if unit['detail'] else {}
+                    metrics = labor.get('metrics', {})
+                    hours = metrics.get('总工时(小时)', {})
+                    volumes = metrics.get('产量(盒)', {})
+                    factors = labor_factor_bridge(labor.get('amount_before'), labor.get('amount_after'),
+                        hours.get('before'), hours.get('after'), volumes.get('before'), volumes.get('after'))
+                    if factors['available'] and (volumes.get('before') != float(q0) or volumes.get('after') != float(q1)
+                            or _dec(labor.get('amount_before')) != q0*c0 or _dec(labor.get('amount_after')) != q1*c1):
+                        factors = {'available': False, 'reason': '人工明细产量或归集金额与汇总不一致，不能拼接人工因素'}
+                    if factors['available']:
+                        ident = evidence(
+                            f"总工时{factors['hours_before']}→{factors['hours_after']}小时，归集人工费用/小时"
+                            f"{factors['cost_per_hour_before']}→{factors['cost_per_hour_after']}元/小时；"
+                            f"人工总额工时影响{factors['hours_effect']}元，小时归集费用影响{factors['rate_effect']}元；"
+                            f"每盒工时影响{factors.get('unit_hours_effect')}元/盒，小时归集费用影响{factors.get('unit_rate_effect')}元/盒。"
+                            '按先工时后费率顺序分解，归集费用不是个人工资率。',
+                            {'table': 'labor', 'records': [labor.get('source_before'), labor.get('source_after')],
+                             'key': source_pair['key'], 'note': factors['basis']})
+                        factors['evidence_id'] = ident
+                        unit['evidence_ids'].append(ident)
+                    unit['labor_factors'] = factors
                 result["elements"][label] = unit
         result["available"] = True
         return result

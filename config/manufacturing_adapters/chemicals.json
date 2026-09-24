@@ -1,0 +1,42 @@
+{
+  "schema_version": "manufacturing-adapter/1",
+  "id": "chemicals-starter",
+  "version": "1.0.0",
+  "industry": "chemicals",
+  "label": "化工制造列映射模板（未接入真实企业数据）",
+  "status": "template",
+  "columns": {
+    "factory": "生产工厂",
+    "product": "物料编码",
+    "specification": "牌号规格",
+    "month": "核算月份",
+    "material": "单位原材料费",
+    "labor": "单位直接人工费",
+    "overhead": "单位制造费",
+    "unitcost": "单位生产成本",
+    "output": "核算产量",
+    "total": "生产总成本"
+  },
+  "currency": {
+    "source_column": "核算币种",
+    "target": "CNY",
+    "rates": [{"source": "CNY", "factor": "1"}]
+  },
+  "units": {
+    "quantity_column": "核算产量单位",
+    "cost_denominator_column": "成本分母单位",
+    "conversions": [
+      {"source": "kg", "target": "kg", "factor": "1"},
+      {"source": "g", "target": "kg", "factor": "0.001"},
+      {"source": "t", "target": "kg", "factor": "1000"}
+    ]
+  },
+  "factories": [],
+  "product_units": [],
+  "limitations": [
+    "只有源字段映射和精确质量单位定义；没有真实化学品、配方、收率、能耗或行业基准。",
+    "kg是候选目标单位，实际干基湿基、纯度、浓度和成本归集范围须另行确认。",
+    "不进行质量与体积换算，不假定密度；联副产品分摊与质量平衡须在上游单独核定。",
+    "法规、安全环保和危险化学品要求只能来自适用且有效的已批准资料，不由模板生成。"
+  ]
+}

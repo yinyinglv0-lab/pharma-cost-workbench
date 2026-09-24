@@ -26,7 +26,21 @@ with analysis:
             try:
                 payload = repo.get(ident)
                 result = payload['analysis']
-                st.write(result.get('concise_text', result.get('text', '')))
+                sections = result.get('sections') or []
+                has_adopted_prose = any(section.get('prose_mode') == 'bound-numeric-prose/1'
+                    and isinstance(section.get('prose'), str) and section['prose'].strip()
+                    for section in sections if isinstance(section, dict))
+                if has_adopted_prose:
+                    # repo.get() already verified the frozen payload hash and
+                    # current access. Replay only; no retrieval or model call.
+                    from app_pages.citations import render_layered_analysis
+                    st.caption('已保存分析的散文阅读副本；不是重新生成结果。')
+                    render_layered_analysis(sections, result.get('sources', []),
+                        overview=result.get('overview', ''), key='history_citations',
+                        followup_criteria=result.get('followup_criteria', ''),
+                        limitations=result.get('limitations', []), analysis_kind='attribution')
+                else:
+                    st.write(result.get('concise_text', result.get('text', '')))
                 with st.expander('快照证据与数据版本'):
                     st.json({'versions': payload['versions'], 'sources': result.get('sources', []), 'code_hashes': payload['code_hashes']})
                 st.download_button('下载完整分析快照', json.dumps(payload, ensure_ascii=False, indent=2),

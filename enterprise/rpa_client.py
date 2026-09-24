@@ -1,8 +1,8 @@
 """Official competition RPA adapter. The only enabled destination is loopback mock.
 
-POST /api/rpa/tasks already sends the mock WeChat notification. There is deliberately
-no separate notification method. Production configuration is representable, but all
-production I/O is disabled until a separately authorized integration is implemented.
+POST /api/rpa/tasks sends the initial mock WeChat notification. Independent reminders
+use the official POST /api/notify/wechat contract, which has no remote idempotency or
+query support. Production I/O remains disabled pending authorized integration.
 """
 from __future__ import annotations
 
@@ -99,6 +99,7 @@ class RPAConfig:
     mode: str = "mock"
     timeout_seconds: float = 10.0
     production_allowlist: tuple[str, ...] = ()
+    mock_loopback_allowlist: tuple[str, ...] = ()
 
 
 def _origin(url: str) -> tuple[str, str, int]:
@@ -110,7 +111,10 @@ def _origin(url: str) -> tuple[str, str, int]:
             raise ValueError
         if parsed.scheme not in {"http", "https"} or not parsed.hostname:
             raise ValueError
-        return parsed.scheme, parsed.hostname.lower(), parsed.port or (443 if parsed.scheme == "https" else 80)
+        port = parsed.port if parsed.port is not None else (443 if parsed.scheme == "https" else 80)
+        if not 1 <= port <= 65535:
+            raise ValueError
+        return parsed.scheme, parsed.hostname.lower(), port
     except (TypeError, ValueError):
         raise RPAPolicyError("RPA地址必须是无凭据、路径、查询或片段的明确origin") from None
 
@@ -129,11 +133,16 @@ class RPAClient:
             raise ValueError("RPA超时须大于0且不超过30秒")
         origin = _origin(self.config.base_url)
         if self.config.mode == "mock":
-            if origin not in {("http", "127.0.0.1", 8090), ("http", "localhost", 8090),
-                              ("http", "::1", 8090)}:
-                raise RPAPolicyError("mock只允许http://127.0.0.1:8090、localhost:8090或[::1]:8090")
+            allowed = {("http", "127.0.0.1", 8090), ("http", "localhost", 8090), ("http", "::1", 8090)}
+            for url in self.config.mock_loopback_allowlist:
+                extra = _origin(url)
+                if extra[0] != "http" or extra[1] not in {"127.0.0.1", "localhost", "::1"} or not 1 <= extra[2] <= 65535:
+                    raise RPAPolicyError("mock白名单只能包含明确HTTP loopback origin")
+                allowed.add(extra)
+            if origin not in allowed:
+                raise RPAPolicyError("mock只允许本机8090或明确配置的HTTP loopback白名单")
             host = "[::1]" if origin[1] == "::1" else "127.0.0.1"
-            self.base_url = f"http://{host}:8090"
+            self.base_url = f"http://{host}:{origin[2]}"
         elif self.config.mode == "production":
             allowed = {_origin(url) for url in self.config.production_allowlist}
             if origin[0] != "https" or origin not in allowed:
@@ -161,7 +170,7 @@ class RPAClient:
         if self.config.mode != "mock":
             raise RPAPolicyError("生产RPA网络操作尚未授权，当前实现禁止生产发送和查询")
 
-    def _request(self, method: str, path: str, payload: Mapping[str, Any] | None = None) -> dict | None:
+    def _request(self, method: str, path: str, payload: Mapping[str, Any] | None = None, *, notification=False) -> dict | None:
         self.ensure_enabled()
         posting = method == "POST"
         try:
@@ -201,9 +210,17 @@ class RPAClient:
             data = envelope["data"]
             if envelope.get("code") != 200 or not isinstance(data, dict):
                 raise ValueError("invalid envelope")
-            if data.get("status") not in REMOTE_STATUSES:
-                raise ValueError("invalid status")
-            validate_task_id(data.get("task_id"))
+            if notification:
+                if (response.status_code != 200 or data.get("status") != "delivered"
+                        or data.get("recipient") != payload["recipient"]
+                        or not isinstance(data.get("message_id"), str) or not data["message_id"].strip()
+                        or not isinstance(data.get("sent_at"), str)):
+                    raise ValueError("invalid notification receipt")
+                datetime.fromisoformat(data["sent_at"])
+            else:
+                if data.get("status") not in REMOTE_STATUSES:
+                    raise ValueError("invalid status")
+                validate_task_id(data.get("task_id"))
         except (ValueError, KeyError, TypeError, AttributeError):
             raise RPAError("invalid_response", "官方mock响应格式无效，不能据此认定发送成功",
                            ambiguous=posting, retryable=True) from None
@@ -215,6 +232,14 @@ class RPAClient:
         if data["task_id"] != payload["task_id"]:
             raise RPAError("receipt_id_mismatch", "回执task_id不匹配，等待按原task_id核对", ambiguous=True)
         return data
+
+    def notify_wechat(self, payload: Mapping[str, Any]) -> dict[str, Any]:
+        """Official mock notification only; an ambiguous response must not be retried."""
+        if not isinstance(payload, Mapping) or set(payload) != {"recipient", "department", "message"}:
+            raise ValueError("模拟催办请求须包含recipient/department/message")
+        if any(not isinstance(value, str) or not value.strip() or len(value) > 8000 for value in payload.values()):
+            raise ValueError("模拟催办接收人、部门和消息不能为空")
+        return self._request("POST", "/api/notify/wechat", payload, notification=True)
 
     def get_task(self, task_id: str) -> dict[str, Any] | None:
         validate_task_id(task_id)

@@ -70,8 +70,22 @@ def test_rejected_json_has_one_feedback_call_using_same_evidence(contract, confi
     result = run(contract, config, request, clock=clock, deadline=45, attempt_recorder=progress.append)
     assert len(calls) == 2 and result['correction']['status'] == 'validated'
     assert calls[1][1]['previous_candidate'] == invalid
-    assert calls[1][1]['证据'] == contract[1]
-    assert calls[1][1]['看板波动数据'] == contract[0]
+    projected = ag._model_context(contract[0], contract[1], include_numeric=True)
+    assert calls[0][1] == projected
+    assert {key: value for key, value in calls[1][1].items()
+            if key not in ('previous_candidate', 'validation_errors', 'validation_diagnostics')} == projected
+    structured = calls[1][1]['validation_diagnostics']
+    assert structured == result['attempts'][0]['validation_diagnostics']
+    assert all(set(item) == {'rule_id', 'field', 'offending', 'expected', 'message'}
+               for item in structured)
+    role = next(item for item in structured if item['rule_id'] == 'RESPONSIBLE_ROLE')
+    assert role['field'] == 'elements.材料.recommendation'
+    assert role['offending'] == invalid['elements']['材料']['recommendation']
+    assert '责任角色' in role['expected']
+    assert all(item['expected'] and item['offending'] for item in structured)
+    assert 'validation_diagnostics' in calls[1][0]
+    for element, task in projected['tasks_by_element'].items():
+        assert task['eligible_evidence_ids'] == contract[2]['elements'][element]['evidence_ids']
     assert any('责任部门' in error for error in calls[1][1]['validation_errors'])
     assert calls[1][2] == 33 and clock() == 18
     assert [item['status'] for item in result['attempts']] == ['rejected', 'validated']
@@ -92,7 +106,17 @@ def test_two_invalid_responses_stop_without_cleaning_or_third_call(contract, con
     assert len(calls) == 2 and result['candidate'] == invalid
     assert result['correction']['status'] == 'rejected'
     assert all(not item['used'] and item['status'] == 'rejected' for item in result['attempts'])
-    assert all('文档依据' in item['diagnostics'][0] for item in result['attempts'])
+    # Multiple independent guards can now reject the same ungrounded prose;
+    # preserve the mechanism gate without depending on error-list ordering.
+    assert all(any('文档依据' in error for error in item['diagnostics'])
+               for item in result['attempts'])
+    for attempt in result['attempts']:
+        mechanism = next(item for item in attempt['validation_diagnostics']
+                         if item['rule_id'] == 'MECHANISM_DOCUMENT')
+        assert mechanism['field'] == 'elements.人工.hypothesis'
+        assert mechanism['offending'] == '加班' and '原文明示' in mechanism['expected']
+        assert any(item['rule_id'] == 'RECORD_NAME_SCOPE'
+                   for item in attempt['validation_diagnostics'])
 
 
 @pytest.mark.parametrize('failure', [ModelUnavailable, TimeoutError, ValueError])
@@ -196,7 +220,10 @@ def parent_service(monkeypatch, contract):
     import enterprise.model_gateway
     monkeypatch.setattr(attribution_narrative, 'render', lambda *args: ('overview', [], 'text'))
     monkeypatch.setattr(enterprise.snapshots, 'current_provenance', lambda: {})
-    monkeypatch.setattr(enterprise.model_gateway, 'configuration', lambda: type('Configuration', (), {'api_key': 'fixture'})())
+    # The worker boundary now freezes a genuine trusted configuration identity.
+    # Keep the no-argument resolver hook to exercise legacy Python compatibility.
+    monkeypatch.setattr(enterprise.model_gateway, 'configuration', lambda: ModelConfiguration(
+        'https://fixture.invalid/v1', 'fixture-model', 'fixture', True, 40))
     return lambda **kwargs: ag.generate_attribution('synthetic', '2026-05', d={}, **kwargs)
 
 

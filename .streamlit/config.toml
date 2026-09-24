@@ -1,0 +1,36 @@
+# Local presentation only. Credentials belong in private configuration.
+[client]
+toolbarMode = "minimal"
+
+[browser]
+gatherUsageStats = false
+
+[theme]
+base = "light"
+primaryColor = "#1E3A8A"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F5F7FA"
+textColor = "#202A35"
+font = "'Microsoft YaHei', 'PingFang SC', sans-serif"
+headingFont = "'Microsoft YaHei', 'PingFang SC', sans-serif"
+baseFontSize = 14
+headingFontSizes = ["28px", "22px", "18px", "16px", "14px", "12px"]
+headingFontWeights = [650, 600, 600, 600, 500, 500]
+borderColor = "#DFE6EF"
+baseRadius = "8px"
+buttonRadius = "6px"
+showWidgetBorder = true
+showSidebarBorder = true
+linkColor = "#1E3A8A"
+redColor = "#B73B36"
+greenColor = "#0F766E"
+blueColor = "#2166A5"
+dataframeBorderColor = "#DFE6EF"
+dataframeHeaderBackgroundColor = "#F1F5F9"
+chartCategoricalColors = ["#286AB0", "#B87526", "#0F8574", "#8057AD", "#A24667"]
+
+[theme.sidebar]
+backgroundColor = "#F4F7FA"
+secondaryBackgroundColor = "#E7EEF7"
+textColor = "#34465B"
+primaryColor = "#1E3A8A"

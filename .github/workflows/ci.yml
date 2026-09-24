@@ -83,22 +83,30 @@ jobs:
             printf 'PYTHONPATH=%s\n' "$GITHUB_WORKSPACE"
           } >> "$GITHUB_ENV"
 
-      - name: Run the nine reviewed synthetic test files
+      - name: Run the source bundle's reviewed portable tests
         # TestClient/AppTest are in-process. Launcher checks bind loopback only.
         # Model clients/encoders are fakes; no official mock service is started.
+        # One explicit Python argv list, not shell splitting or broad discovery.
+        # Importing the stdlib-only builder does not create or verify a bundle.
         run: |
           cd "$CI_EMPTY_WORKDIR"
-          python -m pytest -q --strict-config --strict-markers \
-            --rootdir "$GITHUB_WORKSPACE" --confcutdir "$GITHUB_WORKSPACE" \
-            "$GITHUB_WORKSPACE/tests/test_model_gateway.py" \
-            "$GITHUB_WORKSPACE/tests/test_knowledge_versions.py" \
-            "$GITHUB_WORKSPACE/tests/test_knowledge_release.py" \
-            "$GITHUB_WORKSPACE/tests/test_operations.py" \
-            "$GITHUB_WORKSPACE/tests/test_system_observability.py" \
-            "$GITHUB_WORKSPACE/tests/test_launch_system.py" \
-            "$GITHUB_WORKSPACE/tests/test_knowledge_langchain.py" \
-            "$GITHUB_WORKSPACE/tests/test_human_scores.py" \
-            "$GITHUB_WORKSPACE/tests/test_attribution_repair.py"
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          import pytest
+          from scripts.build_source_bundle import portable_test_paths
+
+          root = Path(os.environ['GITHUB_WORKSPACE']).resolve()
+          tests = portable_test_paths()
+          missing = [name for name in tests if not (root / name).is_file()]
+          if missing:
+              raise SystemExit('Missing reviewed portable tests: ' + ', '.join(missing))
+          raise SystemExit(pytest.main([
+              '-q', '--strict-config', '--strict-markers',
+              '--rootdir', str(root), '--confcutdir', str(root),
+              *[str(root / name) for name in tests],
+          ]))
+          PY
 
   core-container-smoke:
     name: Core image (synthetic, offline runtime)

@@ -17,6 +17,51 @@ def now():
     return datetime.now(timezone.utc).isoformat()
 
 
+def frozen_export_payload(payload, record):
+    """Apply a decision without mutating the source; retain historical overlays.
+
+    Renderer 1/2 used a specific three-position statement overlay. Its bytes are
+    part of the signed render hash, so the readable single-statement rule applies
+    only to new renderer-3 payloads. Cached historical artifacts are never rebuilt.
+    """
+    from report.model import digest, verify_payload
+    verify_payload(payload)
+    exported = deepcopy(payload)
+    ident = record['id']
+    approved = record['status'] == 'approved'
+    modern = payload['versions']['renderer']['version'] == 'shared-docx-reportlab/3.0'
+    statement = ('已审核签发' if approved else '草稿／未签发') + f" · 报告{ident} · 版本{record['version']}"
+    if approved:
+        timestamp = record['approved']
+        if modern and timestamp:
+            timestamp = datetime.fromisoformat(timestamp).astimezone(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')
+        statement += (f" · 审核账号{record['approver']} · 审核时间{timestamp} · 意见{record['reason']}" if modern else
+                      f" · 审核人{record['approver']} · 审核时间{record['approved']} · 意见{record['reason']}")
+    elif modern:
+        statement += ' · ' + {'draft': '待提交', 'submitted': '待审核', 'rejected': '已退回'}.get(record['status'], record['status'])
+    exported['review_status'] = record['status']
+    exported['approval'] = {'status': record['status'], 'approver': record['approver'],
+                            'approved_at': record['approved'], 'reason': record['reason'],
+                            'source_payload_hash': payload['frozen_hash'], 'decision_version': record['version']}
+    if modern:
+        slots = [block for block in exported['blocks'] if block.get('role') == 'approval_status']
+        if len(slots) != 1:
+            raise ValueError('新版本报告须有唯一审核状态展示位置')
+        slots[0]['text'] = statement
+    else:
+        for block in exported['blocks']:
+            if block.get('text') == '完整期间报告／待专业审核':
+                block['text'] = statement
+            if block.get('kind') == 'table':
+                for cells in block.get('rows', []):
+                    if cells and cells[0] == '审核状态' and len(cells) > 1:
+                        cells[1] = statement
+        exported['blocks'].insert(1, {'kind': 'paragraph', 'text': statement})
+    exported.pop('frozen_hash', None)
+    exported['frozen_hash'] = digest(exported)
+    return exported
+
+
 class ReportRepository:
     def __init__(self, root=None):
         self.root = Path(root) if root else MANAGED_DIR
@@ -170,8 +215,8 @@ class ReportRepository:
 
     @guarded_write
     def export(self, ident, format='docx', *, actor):
-        if format not in ('docx', 'pdf'):
-            raise ValueError('导出格式须为docx或pdf')
+        if format not in ('docx', 'pdf', 'audit_json'):
+            raise ValueError('导出格式须为docx、pdf或audit_json')
         with closing(self._connect()) as con, con:
             row, payload = self._load(con, ident, actor)
             artifact = con.execute('SELECT * FROM report_artifacts WHERE report_id=? AND format=? AND version=?',
@@ -180,26 +225,7 @@ class ReportRepository:
                 if hashlib.sha256(artifact['content']).hexdigest() != artifact['hash']:
                     raise ValueError('已归档报告文件摘要不一致')
                 return artifact['content']
-            exported = deepcopy(payload)
-            approved = row['status'] == 'approved'
-            statement = ('已审核签发' if approved else '草稿／未签发') + f" · 报告{ident} · 版本{row['version']}"
-            if approved:
-                statement += f" · 审核人{row['approver']} · 审核时间{row['approved']} · 意见{row['reason']}"
-            exported['review_status'] = row['status']
-            exported['approval'] = {'status': row['status'], 'approver': row['approver'],
-                                    'approved_at': row['approved'], 'reason': row['reason'],
-                                    'source_payload_hash': payload['frozen_hash'], 'decision_version': row['version']}
-            for block in exported['blocks']:
-                if block.get('text') == '完整期间报告／待专业审核':
-                    block['text'] = statement
-                if block.get('kind') == 'table':
-                    for cells in block.get('rows', []):
-                        if cells and cells[0] == '审核状态' and len(cells)>1:
-                            cells[1] = statement
-            exported['blocks'].insert(1, {'kind': 'paragraph', 'text': statement})
-            from report.model import digest
-            exported.pop('frozen_hash', None)
-            exported['frozen_hash'] = digest(exported)
+            exported = frozen_export_payload(payload, row)
             from enterprise.report_service import export_report
             content = export_report(exported, format)
             con.execute('INSERT INTO report_artifacts VALUES(?,?,?,?,?,?)',

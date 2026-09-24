@@ -34,6 +34,7 @@ from enterprise.knowledge import (
     normalize_known_at, require_principal,
 )
 from enterprise.knowledge_release import get_search_engine
+from enterprise.tabular_knowledge import normalize_knowledge_types
 
 FRAMEWORK_VERSION = importlib.metadata.version('langchain-core')
 ADAPTER_NAME = 'ControlledKnowledgeRetriever'
@@ -74,12 +75,19 @@ class RetrievalContext:
     allowed_factories: tuple[str, ...]
     top_k: int
     vector_timeout: float
+    knowledge_types: tuple[str, ...] | None = None
+    require_hybrid: bool = False
 
     def search_arguments(self):
-        return {'product': self.product, 'factory': self.factory, 'as_of': self.as_of,
+        result = {'product': self.product, 'factory': self.factory, 'as_of': self.as_of,
                 'known_at': self.known_at, 'release_id': self.release_id, 'top_k': self.top_k,
                 'vector_timeout': self.vector_timeout,
                 'allowed_scopes': {'products': list(self.allowed_products), 'factories': list(self.allowed_factories)}}
+        if self.knowledge_types is not None:
+            result['knowledge_types'] = list(self.knowledge_types)
+        if self.require_hybrid:
+            result['require_hybrid'] = True
+        return result
 
 
 class RetrievedDocuments(list[Document]):
@@ -143,7 +151,7 @@ class ControlledKnowledgeRetriever(BaseRetriever):
 
     def __init__(self, *, principal, repository=None, product=None, factory=None, as_of=None,
                  known_at=None, allowed_scopes=None, release_id=None, top_k=10,
-                 vector_timeout=3.0, engine=None):
+                 vector_timeout=3.0, engine=None, knowledge_types=None, require_hybrid=False):
         bound = BoundPrincipal.capture(principal)
         scopes = authorize_query(bound, product=product, factory=factory, allowed_scopes=allowed_scopes)
         if as_of is not None:
@@ -156,8 +164,11 @@ class ControlledKnowledgeRetriever(BaseRetriever):
             raise KnowledgeError('top_k须为1至100')
         if isinstance(vector_timeout, bool) or not isinstance(vector_timeout, (int, float)) or not math.isfinite(vector_timeout) or not 0 < vector_timeout <= 30:
             raise KnowledgeError('vector_timeout须在0至30秒之间')
+        if not isinstance(require_hybrid, bool):
+            raise KnowledgeError('require_hybrid须为布尔值')
         context = RetrievalContext(product, factory, as_of, known_at, release_id,
-            tuple(sorted(scopes['products'])), tuple(sorted(scopes['factories'])), top_k, float(vector_timeout))
+            tuple(sorted(scopes['products'])), tuple(sorted(scopes['factories'])), top_k, float(vector_timeout),
+            normalize_knowledge_types(knowledge_types), require_hybrid)
         super().__init__(principal=bound, query_context=context, tags=None, metadata=None)
         self._engine = engine if engine is not None else get_search_engine(repository=repository or Repository())
 
@@ -181,7 +192,16 @@ class ControlledKnowledgeRetriever(BaseRetriever):
                 'effective_from': catalog['effective_from'], 'effective_to': catalog['effective_to'],
                 'confirmed_at': catalog['confirmed_at'], 'business_metadata': catalog['business_metadata'],
                 'score': row['score'], 'route_scores': deepcopy(row['route_scores']),
-                'rerank_score': row.get('rerank_score'), 'as_of': stats['as_of'], 'known_at': stats['known_at'],
+                'rerank_score': row.get('rerank_score'),
+                 'retrieval_scores': {'rrf_score': row['score'],
+                                      'rerank_score': row.get('rerank_score'),
+                                      'vector_score': row.get('route_scores', {}).get('vector'),
+                                      'bm25_score': row.get('route_scores', {}).get('bm25'),
+                                      'graph_score': row.get('route_scores', {}).get('graph'),
+                                      'domain_graph_score': row.get('route_scores', {}).get('domain_graph')},
+                 'rerank_details': deepcopy(row.get('rerank_details')),
+                 'domain_evidence': deepcopy(row.get('domain_evidence', [])),
+                 'as_of': stats['as_of'], 'known_at': stats['known_at'],
                 'retrieval_mode': stats['retrieval_mode'], 'retrieval_degraded': stats['degraded'],
                 'degradation_reasons': deepcopy(stats['degradation_reasons']),
                 'framework': deepcopy(stats['framework']), 'metadata_redactions': redactions,
@@ -265,5 +285,8 @@ def retrieve_rows(query, *, principal, repository=None, engine=None, **query_con
                      'document_id': metadata['document_id'], 'version_id': metadata['version_id'],
                      'release_id': metadata['release_id'], 'generation': metadata['generation'],
                      'meta': deepcopy(metadata['catalog']), 'score': metadata['score'],
-                     'route_scores': deepcopy(metadata['route_scores']), 'rerank_score': metadata['rerank_score']})
+                     'route_scores': deepcopy(metadata['route_scores']), 'rerank_score': metadata['rerank_score'],
+                      'retrieval_scores': deepcopy(metadata.get('retrieval_scores', {})),
+                      'rerank_details': deepcopy(metadata.get('rerank_details')),
+                      'domain_evidence': deepcopy(metadata.get('domain_evidence', []))})
     return rows, deepcopy(documents.stats)

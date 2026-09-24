@@ -11,7 +11,10 @@ from paths import DATA_DIR, BASE_DIR, MANAGED_DIR
 from enterprise.operations import guarded_write
 from enterprise.cost_imports import canonical, records
 
-CODE_FILES = ('attribution_gen.py','attribution_facts.py','attribution_decomposition.py','attribution_narrative.py','dashboard/data_layer.py')
+CODE_FILES = ('attribution_gen.py','attribution_facts.py','attribution_decomposition.py','attribution_narrative.py',
+              'attribution_runtime.py','dashboard/data_layer.py','enterprise/causal_guard.py','enterprise/numeric.py',
+              'enterprise/analysis_service.py','enterprise/analysis_context.py','enterprise/benchmark_ai.py','enterprise/knowledge_context.py',
+              'enterprise/knowledge_applicability.py')
 
 
 def current_provenance():

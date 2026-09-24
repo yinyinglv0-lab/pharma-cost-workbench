@@ -43,11 +43,11 @@ class Principal:
 
 PERMISSIONS = {
     'analyst': frozenset({'dashboard.read', 'data.read', 'data.stage', 'knowledge.read',
-                         'analysis.generate', 'report.generate', 'report.read', 'task.create', 'task.read'}),
+                         'analysis.generate', 'report.generate', 'report.read', 'task.create', 'task.read', 'task.rectify'}),
     'supervisor': frozenset({'dashboard.read', 'data.read', 'data.stage', 'data.confirm', 'period.manage',
                             'knowledge.read', 'knowledge.publish', 'analysis.generate', 'report.generate',
                             'report.read', 'report.approve', 'task.create', 'task.read', 'task.approve',
-                            'task.send', 'task.audit', 'audit.read'}),
+                            'task.send', 'task.audit', 'task.rectify', 'task.accept', 'task.remind', 'audit.read'}),
     'knowledge_admin': frozenset({'knowledge.read', 'knowledge.stage', 'knowledge.publish', 'knowledge.audit'}),
     'auditor': frozenset({'dashboard.read', 'data.read', 'knowledge.read', 'report.read', 'task.read',
                          'task.audit', 'audit.read'}),

@@ -1,75 +1,136 @@
-"""Conclusion-first narrative rendered only from calculated JSON facts."""
+"""Source excerpt gates and backwards-compatible attribution renderer.
 
-def render(payload, explanations=None):
-    from attribution_gen import LABELS, _num, _short_field, SHORT_ACTIONS
-    facts=payload['facts']
-    if not facts.get('available'):
-        note=f"{payload['product']} {payload['month']}：{facts.get('reason')}。不生成跨月归因。"
-        return note, [], note
-    elements=payload['elements']
-    lead=max(elements,key=lambda k:abs(elements[k]['change_amount']))
-    total=payload['金额口径']['总变动额']
-    output=sum(e['output_effect'] for e in elements.values())
-    unit=sum(e['unit_cost_effect'] for e in elements.values())
-    overview=f"{payload['month']}总成本变动{_num(total,True)}元，其中产量影响{_num(output,True)}元、单位成本影响{_num(unit,True)}元。"
-    if total:
-        overview+=f"产量和单位成本影响分别占净变动的{_num(output/total*100)}%和{_num(unit/total*100)}%。"
-    overview+=f"{LABELS[lead]}是金额变动绝对值最大的要素。"
-    if output<0:overview+='产量减少导致的支出下降不等于成本管控节约；单位成本下降也需核实业务原因。'
-    sections=[]
-    for key in sorted(elements,key=lambda k:abs(elements[k]['change_amount']),reverse=True):
-        e=elements[key]; f=facts['elements'][key]
-        ratio=f"{_num(f['mom_pct'],True)}%" if f['mom_pct'] is not None else '不可计算（上月为零）'
-        contrib=f"金额贡献度{_num(e['contribution_pct'])}%" if e['contribution_pct'] is not None else '净变动为零，贡献度无定义'
-        direction='上涨' if f['unit_delta']>0 else '下降' if f['unit_delta']<0 else '持平'
-        first=f"{LABELS[key]}单位成本{direction}{_num(abs(f['unit_delta']))}元/盒（环比{ratio}），{contrib}。"
-        refs=list(f.get('evidence_ids',[])) + [x['id'] for x in e.get('evidence',[])]
-        if e['analysis_level']=='brief':
-            text=first+'本月单位成本变动较小，保持常规监测。'
-        else:
-            driver={'output':'产量变化','unit_cost':'单位成本变化','balanced':'产量与单位成本共同变化','none':'无净影响'}[e['dominant_driver']]
-            text=first+f"金额变动{_num(e['change_amount'],True)}元，以{driver}影响为主（产量影响{_num(e['output_effect'],True)}元，单位成本影响{_num(e['unit_cost_effect'],True)}元）。"
-            top=e.get('top_materials',[])
-            if key=='材料' and e['price_effect'] is not None:
-                pd=e['price_usage_driver']; label={'price':'价格因素为主','usage':'折算单耗因素为主','balanced':'两项影响相当','none':'两项均无影响'}.get(pd['dominant'],'')
-                text+=f"\n市场参考量价测算：价格因素{_num(e['price_effect'],True)}元，折算单耗因素{_num(e['usage_effect'],True)}元，{label}"
-                if pd['relationship']=='offset':text+='，两项方向相反、相互抵消'
-                text+='。'
-                for unmatched in e.get('unmatched_materials',[]):
-                    if unmatched.get('unit_cost_effect') is not None:
-                        text+=f"\n{unmatched['name']}未匹配市场参考价，单位成本影响{_num(unmatched['unit_cost_effect'],True)}元，单独保留而不归入药材量价因素。"
-                if abs(e.get('unallocated_residual',0))>.01:
-                    text+=f"尚未勾稽分配部分{_num(e['unallocated_residual'],True)}元，需补齐原始明细核对。"
-                for m in top[:2]:
-                    text+=f"\n{m['name']}：参考价{_num(m['reference_price_before'])}→{_num(m['reference_price_after'])}元/kg，折算单耗{m['reference_usage_before']:.5f}→{m['reference_usage_after']:.5f}kg/盒；价格影响{_num(m['price_effect'],True)}元、折算单耗影响{_num(m['usage_effect'],True)}元。"
-                text+='以上为市场参考假设下的分解，不代表实际采购价格或实物耗用变化。'
-                rising=e.get('reference_usage_increase_names',[])
-                if len(rising)>1:
-                    text+='、'.join(rising)+'的参考折算单耗同时上升，需核对采购计价、批次结构及收率，不能据此认定实物耗用或生产效率恶化。'
-            elif key=='材料':
-                text+='未获得可匹配的市场参考价，本月不生成价格和单耗测算。'
-            row=explanations['elements'][key] if explanations else {}
-            if key=='材料':
-                names='、'.join(m['name'] for m in top[:2]) or '主要变动原材料'
-                action=f"建议：采购部逐项比对{names}本月结算价与合同执行价，检查是否有调价约定；生产部对比{payload['month']}与{facts['previous_month']}相关批次的投料、产出及收率记录，定位差异批次。"
-            elif key=='人工':
-                action=f"建议：生产部对比{payload['month']}与{facts['previous_month']}工时和产量，财务部核查加班工资及跨期计提，区分用工投入与每工时人工成本变化。"
-            else:
-                details=f.get('detail',[])
-                name=details[0]['name'] if details else '主要费用项目'
-                action=f"建议：财务部对比{payload['month']}与{facts['previous_month']}的{name}凭证和分配基数，逐项区分支出变化、归集期间与产量摊薄影响。"
-                if facts['current']['volume'] < facts['previous']['volume'] and f['unit_delta']<0:
-                    text+='产量与单位制造费用同时下降，需核查费用支出、固定与变动费用分配及跨期归集，不能仅解释为产量摊薄。'
-            if row:
-                hypothesis=_short_field(row.get('hypothesis'),'','hypothesis',80)
-                if hypothesis:text+='\n业务解释：'+hypothesis
-                # Preserve the data-specific action even if the model supplies a generic recommendation.
-                extra=_short_field(row.get('recommendation'),'','recommendation',100)
-                if extra and any(m['name'] in extra for m in top[:2]):action=extra
-                refs+=row.get('evidence_ids',[])
-            text+='\n'+action
-        sections.append({'element':key,'title':LABELS[key], 'text':text,'evidence_ids':list(dict.fromkeys(refs)), 'analysis_level':e['analysis_level']})
-    parts=[overview]+[s['text'] for s in sections]
-    if payload['告警_环比超正负10%']:
-        parts.append('重点告警：'+'；'.join(f"{a['要素']}环比{_num(a['环比%'],True)}%" for a in payload['告警_环比超正负10%'])+'，严格超过±10%，优先按上述建议核查。')
-    return overview,sections,'\n\n'.join(parts)
+The shared deterministic contract lives in enterprise.analysis_narrative. These
+quote helpers remain public because existing model validators also use them.
+"""
+from pathlib import PureWindowsPath
+import re
+
+from enterprise.numeric import format_number as number, format_percent
+
+
+_QUOTE_WORDS = {
+    '材料': ('收率', '投料', '损耗', '原料', '材料', '耗用', '填充', '配方', 'RSD', 'rsd', '均匀性'),
+    '人工': ('工时', '定员', '人工', '工资', '返工'),
+    '制费': ('折旧', '能源', '能耗', '蒸汽', '设备', '维修', '制造费用'),
+}
+_QUOTE_INSTRUCTION = re.compile(
+    r'忽略.{0,20}(?:指令|提示|规则|约束|要求)|(?:系统|开发者|角色)提示|你是|你必须|'
+    r'(?:输出|返回|生成|复述|重复).{0,20}(?:JSON|答案|数字|数值|百分比|hypothesis|recommendation)|'
+    r'(?:system|assistant|developer)\s*:|ignore.{0,30}instructions|'
+    r'hypothesis|recommendation|evidence_ids|https?://|<[^>]+>|```', re.I)
+_QUOTE_HEADING = re.compile(r'(?:影响|关联|分配|分析|概述|要求|规范|指标|流程|路线|说明|需求)(?:表)?[。:：]?\s*$')
+_QUOTE_STANDARD = re.compile(
+    r'(?:收率|合格率|损耗|装量|投料量|耗量|工时|定员|温度|压力|能耗|折旧率|RSD|相对标准偏差)\s*'
+    r'(?:应|须|需|为|是|约|达到|不得低于|不得超过|不低于|不高于)?\s*'
+    r'(?:[≥≤><=]|不超过|至少|最多|不低于|不高于)?\s*\d+(?:\.\d+)?\s*'
+    r'(?:[%％℃]|kg|千克|公斤|人|小时|h|kWh|MPa)', re.I)
+_QUOTE_MECHANISM = re.compile(
+    r'.{2,}(?:导致|造成|增加|减少|降低|提高|浪费|报废|计入|归集至|计提|影响)'
+    r'.*(?:材料|原料|耗用|损耗|成本|人工|工时|工资|能耗|能源|蒸汽|费用)|'
+    r'(?:材料|原料|耗用|损耗|成本|人工|工时|工资|能耗|能源|蒸汽|费用)'
+    r'.{0,16}(?:增加|减少|降低|提高|浪费|报废)|'
+    r'(?:应|须|需|不得|要求).{0,40}(?:核对|核查|复核|控制|记录|计量|分配|检验)|'
+    r'(?:工时|工资|费用|折旧).{0,16}按.{1,20}(?:分配|计提|归集|记录)|'
+    r'配方.{0,40}(?:占比|比例|占).{0,12}\d+(?:\.\d+)?\s*[%％]')
+
+
+def is_substantive_quote(text, element):
+    """Conservative excerpt gate, not semantic proof or a current-event claim."""
+    from enterprise.knowledge_applicability import matching_view
+    if not isinstance(text, str) or not 8 <= len(text) <= 260:
+        return False
+    view = matching_view(text)
+    if _QUOTE_INSTRUCTION.search(view):
+        return False
+    words = _QUOTE_WORDS.get(element)
+    if not words:
+        return False
+    # Do not borrow an element word from a heading to license an unrelated row.
+    for line in re.split(r'[。；！？\n]+', view):
+        line = line.strip()
+        staffing = element == '人工' and re.search(r'\d+\s*人\s*[/每]\s*班', line)
+        if not staffing and not any(word in line for word in words):
+            continue
+        if _QUOTE_HEADING.search(line) and not re.search(r'[，,]|应|须|需.{1,}|导致|造成', line):
+            continue
+        if staffing or _QUOTE_STANDARD.search(line) or _QUOTE_MECHANISM.search(line):
+            return True
+    return False
+
+
+def cited_quote(sources, evidence_ids, element):
+    """One substantive, contiguous original excerpt from an actually cited source."""
+    from enterprise.knowledge_applicability import matching_view
+    words = _QUOTE_WORDS.get(element)
+    if not words:
+        return None
+    for source in sources or []:
+        if (not isinstance(source, dict) or source.get('id') not in evidence_ids
+                or source.get('kind') != 'document_basis'
+                or element not in source.get('elements', [])
+                or source.get('evidence_role', 'document_basis') != 'document_basis'
+                or source.get('support_status', 'eligible') != 'eligible'):
+            continue
+        raw = source.get('text', '')
+        if not isinstance(raw, str) or _QUOTE_INSTRUCTION.search(matching_view(raw)):
+            continue
+        pieces = list(re.finditer(r'[^。；！？\n]+[。；！？]?', raw))
+        quote = None
+        for index, piece in enumerate(pieces):
+            if not any(word in matching_view(piece.group()) for word in words):
+                continue
+            # A table header can only accompany a real staffing row.
+            for end in range(index, min(index+4, len(pieces))):
+                candidate = raw[piece.start():pieces[end].end()].strip()
+                if len(candidate) > 260:
+                    break
+                if is_substantive_quote(candidate, element):
+                    last = pieces[end].group().strip()
+                    start = pieces[end].start() if is_substantive_quote(last, element) and any(
+                        word in matching_view(last) for word in words) else piece.start()
+                    stop = pieces[end].end()
+                    if end + 1 < len(pieces) and re.match(r'\s*[↑↓]\s*\d', pieces[end+1].group()):
+                        continued = raw[start:pieces[end+1].end()].strip()
+                        if is_substantive_quote(continued, element):
+                            stop = pieces[end+1].end()
+                    quote = raw[start:stop].strip()
+                    break
+            if quote:
+                break
+        if quote is None:
+            continue
+        meta = source.get('source') or {}
+        filename = PureWindowsPath(str(meta.get('file') or meta.get('document_id') or '工艺资料')).name
+        return {'id': source['id'], 'quote': quote, 'source': meta,
+                'text': f'《{filename}》写明“{quote}”[{source["id"]}]，可据此核对本期记录。'}
+    return None
+
+
+def narrative_references(sources, refs):
+    """Retain all already-admitted IDs; callers own authorization/validation."""
+    return list(dict.fromkeys(refs))
+
+
+def _marks(refs):
+    return ' '.join(f'[{ref}]' for ref in dict.fromkeys(refs) if ref)
+
+
+def _labor_text(facts, refs):
+    """Legacy private helper retained; the shared renderer handles generic units."""
+    from enterprise.analysis_narrative import _labor_observation, _settings
+    lines, identifiers = _labor_observation(facts.get('labor_factors', {}), _settings(None, '元', '盒'))
+    refs.extend(identifiers)
+    return '\n'.join(lines) or '现有人工记录不足以区分工时与小时归集费用，未推定具体业务原因。'
+
+
+def render(payload, explanations=None, sources=None, *, detailed=False,
+           amount_unit='元', reporting_unit='盒', industry_comparison=None,
+           observed_yields=None, config=None):
+    """Preserve the legacy (overview, sections, text) tuple and keyword contract."""
+    from enterprise.analysis_narrative import build_attribution_narrative
+    result = build_attribution_narrative(
+        payload, explanations, sources, detailed=detailed,
+        amount_unit=amount_unit, reporting_unit=reporting_unit,
+        industry_comparison=industry_comparison, observed_yields=observed_yields, config=config)
+    return result['overview'], result['sections'], result['text']

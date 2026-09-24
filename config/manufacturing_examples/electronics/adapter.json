@@ -1,0 +1,41 @@
+{
+  "schema_version": "manufacturing-adapter/2",
+  "id": "simulation_electronics_adapter",
+  "version": "1.0.0",
+  "industry": "electronics",
+  "label": "SIMULATION Electronics identity adapter",
+  "status": "active",
+  "columns": {
+    "factory": "factory",
+    "product": "product",
+    "specification": "specification",
+    "month": "month",
+    "material": "material",
+    "labor": "labor",
+    "overhead": "overhead",
+    "unitcost": "unitcost",
+    "output": "output",
+    "total": "total"
+  },
+  "currency": {
+    "source_column": "currency",
+    "target": "CNY",
+    "rates": [{"source": "CNY", "factor": "1"}]
+  },
+  "units": {
+    "quantity_column": "quantity_unit",
+    "cost_denominator_column": "cost_denominator_unit",
+    "conversions": [{"source": "piece", "target": "piece", "factor": "1"}]
+  },
+  "factories": ["SIMULATION Electronics Home Factory", "SIMULATION Electronics Peer Factory"],
+  "product_units": [
+    {"product": "SIMULATION Control PCB", "specification": "SIM-PCB-4L", "unit": "piece"},
+    {"product": "SIMULATION Sensor PCB", "specification": "SIM-PCB-2L", "unit": "piece"}
+  ],
+  "limitations": [
+    "SIMULATION data only; active status does not confer production approval or access permissions.",
+    "Exact identity mappings only: CNY to CNY and piece to piece each have explicit factor 1; no currency lookup, package conversion or inferred aliases.",
+    "Factory, product and SIM-prefixed specification labels are synthetic and must match exactly.",
+    "Reference BOM coefficients and knowledge ranges are not actual observations or confirmed operational causes."
+  ]
+}

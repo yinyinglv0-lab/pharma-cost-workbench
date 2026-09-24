@@ -9,7 +9,7 @@ from __future__ import annotations
 import base64
 from copy import deepcopy
 from datetime import date, datetime, timedelta, timezone
-from decimal import Decimal, localcontext
+from decimal import Decimal, localcontext, ROUND_HALF_UP
 import hashlib
 import json
 from pathlib import Path
@@ -23,11 +23,13 @@ from .datafill import (COST_COLS, BUDGET_COLS, MFG_NAMES, THEMES, ZERO, CENT,
                        scoped_rows, _period_values, _labor_values, _dec, _mom_pct)
 from .registry import TEMPLATE_PATH, parse_template
 
-SCHEMA_VERSION = "report-payload/1.0"
-CALCULATION_VERSION = "period-cost/1.0"
-TEMPLATE_VERSION = "competition-six-sections/1.0"
-RENDERER_VERSION = "shared-docx-reportlab/1.0"
-PROMPT_VERSION = "report-hypotheses/1.1"
+SCHEMA_VERSION = "report-payload/2.1"
+SUPPORTED_SCHEMAS = {"report-payload/1.0", "report-payload/2.0", SCHEMA_VERSION}
+CALCULATION_VERSION = "period-cost/2.0"
+TEMPLATE_VERSION = "competition-full-outline/2.0"
+RENDERER_VERSION = "shared-docx-reportlab/3.0"
+SUPPORTED_RENDERERS = {'shared-docx-reportlab/1.0', 'shared-docx-reportlab/2.0', RENDERER_VERSION}
+from .claims import PROMPT_VERSION
 LABELS = {"材料": "直接材料", "人工": "直接人工", "制费": "制造费用"}
 ACTIONS = {
     "材料": ("采购部、生产部", "核对主要原材料采购合同、结算单、领退料、投料和批次产出记录，区分采购价格与实际耗用。"),
@@ -61,7 +63,16 @@ def fnum(value):
 def display(value, suffix="", signed=False):
     if value is None or value == "—":
         return "—"
-    return format(Decimal(str(value)), "+,.2f" if signed else ",.2f") + suffix
+    from enterprise.numeric import format_number, format_percent
+    return (format_percent(value, signed=signed) if suffix == '%' else format_number(value, signed=signed)) + suffix
+
+
+def display_pct(value):
+    """Keep small nonzero ratios within 1% display-relative error."""
+    if value is None:
+        return '—'
+    from enterprise.numeric import format_percent
+    return format_percent(value) + '%'
 
 
 def _records(data):
@@ -174,6 +185,13 @@ def _details(data, table, product, spec, months, previous_months, current, previ
         c, p = item["current_amount"], item["previous_amount"]
         item["amount_delta"] = fnum(Decimal(str(c)) - Decimal(str(p))) if c is not None and p is not None else None
         item["unit_change_pct"] = fnum(_mom_pct(item["current_unit"], item["previous_unit"]))
+        item['volume_effect'] = item['unit_effect'] = None
+        if c is not None and p is not None and previous and previous['产量']:
+            prior_unit = Decimal(str(p)) / previous['产量']
+            volume_effect = (current['产量'] - previous['产量']) * prior_unit
+            # Exact amount residual avoids rounding recurring quarterly unit rates.
+            item['volume_effect'] = fnum(volume_effect)
+            item['unit_effect'] = fnum(Decimal(str(c)) - Decimal(str(p)) - volume_effect)
         result.append(item)
     return sorted(result, key=lambda row: (row["amount_delta"] is None, -abs(row["amount_delta"] or 0), row["name"]))
 
@@ -213,17 +231,25 @@ def _market(data, end, material_names):
         if len(frame[frame["药材名称"].eq(row["药材名称"])]) != 1:
             continue
         first, last = _dec(row["1月价格"]), _dec(row[target])
+        prior_field = f"{int(end[5:7]) - 1}月价格"
+        prior = _dec(row[prior_field]) if prior_field in frame else None
         source = source_ref("market", row)
         source["key"].update({"价格字段": target, "年份": str(year), "单位": str(row.get("单位", "未标单位"))})
         source["note"] = "市场参考行情，不是本厂采购实价；不采用晚于分析期的报价或趋势结论"
         result.append({"material": str(row["药材名称"]), "unit": str(row.get("单位", "未标单位")),
                        "first": fnum(first), "current": fnum(last), "change_pct": fnum(_mom_pct(last, first)),
+                       "previous": fnum(prior), "mom_pct": fnum(_mom_pct(last, prior)),
+                       "previous_month": str(pd.Period(end, freq='M') - 1) if prior is not None else None,
                        "month": end, "source": source})
     return result
 
 
 def _table(headers, rows, note=None):
-    return {"headers": headers, "rows": [[str(value) for value in row] for row in rows], "note": note}
+    strings = [[str(value) for value in row] for row in rows]
+    numeric = [index for index in range(1, len(headers))
+               if any(re.fullmatch(r'[+−-]?\d[\d,.]*%?', row[index]) for row in strings)
+               and all(row[index] == '—' or re.fullmatch(r'[+−-]?\d[\d,.]*%?', row[index]) for row in strings)]
+    return {"headers": headers, "rows": strings, "note": note, 'numeric_columns': numeric}
 
 
 def _table_text(table):
@@ -232,51 +258,6 @@ def _table_text(table):
 
 def _ref_text(refs):
     return " ".join(f"[{ident}]" for ident in refs)
-
-
-def _period_narrative(facts, explanations):
-    current, previous = facts["current"], facts["previous"]
-    period = facts["period_label"]
-    opening = (f"{period}产量{display(current['volume'])}盒，总成本{display(current['total_cost'])}元，"
-               f"单位成本{display(current['unit_cost'])}元/盒。")
-    if previous:
-        opening += (f"与完整前期相比，总成本变动{display(facts['amount_change']['总变动额'], signed=True)}元；"
-                    f"产量影响{display(facts['volume_effect'], signed=True)}元，"
-                    f"单位成本影响{display(facts['unit_effect'], signed=True)}元。")
-    else:
-        opening += "缺少完整可比前期，不提供期间变化贡献度与产量/单位成本桥接。"
-    if len(facts["months"]) > 1:
-        opening += "季度产量和金额为全部月份之和，单位成本按产量加权，季度结论覆盖完整季度。"
-    opening += LIMITATIONS[0]
-    sections = []
-    for key, label in LABELS.items():
-        item = facts["elements"][key]
-        text = f"{label}本期金额{display(item['amount'])}元，单位成本{display(item['unit_cost'])}元/盒。"
-        if item["amount_delta"] is not None:
-            text += (f"前期单位成本{display(item['previous_unit'])}元/盒，变动率{display(item['change_pct'], '%')}；"
-                     f"金额变动{display(item['amount_delta'], signed=True)}元，"
-                     + (f"金额贡献度{display(item['contribution_pct'], '%')}。" if item["contribution_pct"] is not None else "总净变动为零，贡献度无定义。")
-                     + f"产量影响{display(item['volume_effect'], signed=True)}元，单位成本影响{display(item['unit_effect'], signed=True)}元。")
-        complete = [row for row in item.get("details", []) if row.get("amount_delta") is not None]
-        if complete:
-            text += "可比明细中主要变动为" + "、".join(f"{row['name']}{display(row['amount_delta'], signed=True)}元" for row in complete[:3]) + "。"
-        elif key != "人工":
-            text += "缺少完整前后期明细，不将未提供项目当作零。"
-        text += " " + _ref_text(item["evidence_ids"])
-        row = explanations.get("elements", {}).get(key, {}) if explanations else {}
-        hypothesis = row.get("hypothesis") or {
-            "材料": "现有单位消耗成本不能确认采购价或实际单耗变化，需补齐合同、领退料与批次产出证据。",
-            "人工": "人工费用变化可能涉及用工投入、工资归集或生产安排，具体原因待核查。",
-            "制费": "制造费用变化可能涉及支出、分配基数或生产负荷，具体原因待凭证核查。",
-        }[key]
-        recommendation = row.get("recommendation") or ACTIONS[key][0] + "应" + ACTIONS[key][1]
-        text += "\n待核查解释：" + hypothesis + (" " + _ref_text(row["evidence_ids"]) if row else "")
-        text += "\n建议：" + recommendation
-        sections.append({"element": key, "title": label, "text": text, "hypothesis": hypothesis,
-                         "recommendation": recommendation,
-                         "claim_type": "hypothesis", "evidence_ids": list(dict.fromkeys(item["evidence_ids"] + row.get("evidence_ids", []))),
-                         "missing_evidence": row.get("missing_evidence", [ACTIONS[key][1]])})
-    return opening, sections
 
 
 def _benchmark(data, product, spec, months, include):
@@ -290,21 +271,255 @@ def _benchmark(data, product, spec, months, include):
     for row in periods:
         for source in row["sources"]:
             sources.append({**source, "id": row["month"].replace("-", "") + "-" + source["id"]})
+    structure = []
+    if complete:
+        for key, label in LABELS.items():
+            value = sum((Decimal(next(part for part in row['elements'] if part['element'] == key)['normalized_amount_exact'])
+                         for row in periods), ZERO)
+            structure.append({'element': key, 'label': label, 'amount': fnum(value), 'amount_exact': str(value),
+                              'contribution_pct': fnum(value / amount * 100) if amount else None,
+                              'direction': '无差额' if not value else '一厂高于二厂' if value > 0 else '一厂低于二厂',
+                              'effect': '无差额' if not value else '相互抵消' if not amount else '抵消净差额' if value * amount < 0 else '同向形成净差额'})
     return {"available": complete, "periods": periods, "sources": sources,
-            "normalized_amount": fnum(amount),
+            "normalized_amount": fnum(amount), "structure": structure,
             "reason": None if complete else "；".join(row["reason"] for row in periods if not row["available"]),
             "formula": "逐月（同品同规格一厂单位成本−二厂单位成本）×当月一厂产量，再对完整期间求和；保留每月的产品与生产结构。",
-            "limitation": "标准化差额为会计比较情景，不是实际节约；缺少二厂原料、工时及费用分配明细，经营原因待核查。"}
+            "limitation": "标准化差额按一厂产量比较两厂成本水平，不是实际节约；实际原因需两厂同口径明细核对。"}
+
+
+def _topic_analysis(facts, focus, sections, *, product, specification):
+    """A substantive focus section from observed facts, not invented topic data."""
+    from .narrative import unit_amount
+    item = facts['elements'][focus]
+    section = next(row for row in sections if row['element'] == focus)
+    refs = _ref_text(item['evidence_ids'])
+    parts = [f"专题焦点：{LABELS[focus]}。专题范围：{product}／{specification}，月份{'、'.join(facts['months'])}。",
+             '专题背景：根据所选焦点单独梳理核算变化、重点对象与核对次序；选择焦点不等于已确认异常或经营根因。',
+             f"本期{LABELS[focus]}金额{display(item['amount'])}元，单位成本{display(item['unit_cost'])}元/盒；"
+             + (f"较完整前期金额变动{display(item['amount_delta'], signed=True)}元，产量影响{display(item['volume_effect'], signed=True)}元，"
+                f"单位成本影响{display(item['unit_effect'], signed=True)}元。" if item['amount_delta'] is not None else
+                '缺少完整前期，不计算金额桥接或以缺失值补零。') + ' ' + refs]
+    details = item.get('details', [])[:3]
+    if details:
+        parts.append('重点明细（按金额变动绝对值排序；缺少前期时仅作本期对象清单）：')
+        for row in details:
+            parts.append(f"{row['name']}：本期金额{display(row['current_amount'])}元，前期{display(row['previous_amount'])}元，"
+                         f"金额变动{display(row['amount_delta'], signed=True)}元；单位影响折算{display(row['unit_effect'], signed=True)}元。 "
+                         + _ref_text(row['evidence_ids']))
+    elif focus == '人工':
+        labor = facts.get('labor', {})
+        current = labor.get('current')
+        if current:
+            parts.append(f"专题可用资料：汇总工时{display(current['hours'])}小时、归集工资{display(current['wages'])}元；"
+                         f"每工时产出{display(current['output_per_hour'])}盒。汇总归集费率不是个人工资。 " + refs)
+        bridge = labor.get('decomposition', {})
+        if bridge.get('available'):
+            parts.append(f"人工专项拆分：单位工时投入影响{unit_amount(bridge['hours_unit_effect'], signed=True)}元/盒，"
+                         f"按本期产量折算{display(bridge['hours_amount_effect'], signed=True)}元；每工时归集费率影响"
+                         f"{unit_amount(bridge['rate_unit_effect'], signed=True)}元/盒，折算{display(bridge['rate_amount_effect'], signed=True)}元。 " + refs)
+    else:
+        parts.append('重点明细未提供完整同口径记录，不能推定分项差异；先核对资料完整性。')
+    if section.get('no_difference'):
+        parts.append('本专题未发生可比要素差异，不新增原因核查任务；保留同口径记录，不编造异常。')
+    else:
+        parts.append('专项核查链（建议，尚未实施）：')
+        if section.get('immediate_action'):
+            parts.append('当前可执行：' + section['immediate_action'])
+        from .actions import action_core_text
+        parts.append('后续对象核实方向：' + action_core_text(section['actions']))
+        parts.append('交付与验收：统一采用6.3共同完成口径；资料缺口不阻断本轮已提供数据的复算和勾稽，逐对象要求保留于冻结审计记录。')
+    gaps = {'材料': '采购结算/领料计价、批次实物领退料与收率原始记录',
+            '人工': '岗位班次工时、个人工资与返工分配记录',
+            '制费': '能源分表计量、设备运行与费用分配原始记录'}
+    parts.append('专题限制：现有汇总及明细不替代' + gaps[focus] + '；未提供的专项实物资料保持缺口，不伪造实耗、效率根因或节约收益。')
+    return '\n'.join(parts)
+
+
+def _report_references(data, product, spec, months, evidence, include_industry):
+    """Freeze monthly reference views, never synthesize a quarterly percentile."""
+    from enterprise.industry_benchmark import build_industry_comparison
+    references = [row for row in evidence if row.get('kind') in {'industry_reference', 'market_reference'}]
+    periods, market_rows, reading, observed_sources = [], [], {}, []
+    for month in months:
+        selected = [row for row in references if month in row.get('report_reference_months', [])]
+        if include_industry:
+            comparison = build_industry_comparison(product, spec, month, data, selected)
+            for index, row in enumerate(comparison['rows'], 1):
+                records = [row[side]['source'] for side in ('home', 'peer')
+                           if row[side]['value'] is not None and row[side].get('source')]
+                row['observation_evidence_ids'] = []
+                if records:
+                    ident = 'R7' + month.replace('-', '') + f'{index:02d}'
+                    row['observation_evidence_ids'] = [ident]
+                    observed_sources.append({'id': ident, 'kind': 'reference_comparison', 'elements': list(LABELS),
+                        'text': month + '同品同规格汇总计算' + row['metric'] + '；只反映成本水平或结构，不证明效率或经营原因。',
+                        'source': {'table': 'industry_observed_comparison', 'records': deepcopy(records)},
+                        'scope': {'product': product, 'specification': spec, 'months': [month]}})
+                reading[row['evidence_id']] = (
+                    f"参考值摘列（非逐字引文）：{row['reference_year']}年行业文件，{row['category']}／{row['metric']}（{row['unit']}）："
+                    f"P25 {display(row['p25']['value'])}，P50 {display(row['p50']['value'])}，P75 {display(row['p75']['value'])}；"
+                    f"文件列示本厂值{display(row['source_reported_home']['value'])}，不是所选月份实测。统计窗口未提供，不据原文件评价认定原因。")
+            periods.append(comparison)
+        for source in selected:
+            if source['kind'] != 'market_reference':
+                continue
+            # Recompute the bounded projection from the checked original row,
+            # not mutable cached observations or its full-half-year trend prose.
+            columns = source['table_row']['columns']
+            number = int(month[-2:])
+            with localcontext() as ctx:
+                ctx.prec = 40
+                current = _dec(columns[f'{number}月价格'])
+                previous = _dec(columns[f'{number - 1}月价格']) if number > 1 else None
+                change = _mom_pct(current, previous)
+            market_rows.append({'month': month, 'material': columns['药材名称'],
+                'grade': columns['规格等级'], 'unit': columns['单位'], 'source_market': columns['价格来源'],
+                'current_price': fnum(current), 'current_price_exact': str(current),
+                'previous_price': fnum(previous), 'previous_price_exact': str(previous) if previous is not None else None,
+                'month_change_pct': fnum(change), 'month_change_pct_exact': str(change) if change is not None else None,
+                'evidence_id': source['id'], 'future_prices_and_full_period_trend_excluded': True})
+    for source in references:
+        selected = [row for row in market_rows if row['evidence_id'] == source['id']]
+        if selected:
+            reading[source['id']] = '\n'.join(
+                f"按月参考摘列（非逐字引文）：{row['month']} {row['material']}／{row['grade']}，参考价{display(row['current_price'])}{row['unit']}，"
+                f"上月{display(row['previous_price'])}，环比{display_pct(row['month_change_pct'])}；来源市场：{row['source_market']}。"
+                '只展示对应月份及上月，不采用未来报价或整期趋势；不是任一工厂采购实价。' for row in selected)
+    industry_available = any(p['available'] for p in periods)
+    industry = {'available': industry_available, 'periods': periods,
+        'aggregation': 'month_specific_comparisons_only', 'months': list(months),
+        'reason': None if industry_available else ('未选择行业参考' if not include_industry else
+                   '当前未取得通过授权、范围及期间校验的行业参考；不自行补充基准。'),
+        'boundary': '年度/产品类别P25、P50、P75仅作参照，统计窗口及样本未明确；不是同品同规格月度行业观测，不汇总或均值化为季度行业行。'
+                    '文件列示本厂值与两厂所选月实测分开；占比高低不是效率优劣，差额不是可实现节约。'}
+    market = {'available': bool(market_rows), 'rows': market_rows,
+        'reason': None if market_rows else '未取得适用于所选月份及本产品材料的已授权市场参考。',
+        'boundary': '市场报价不等于任一工厂结算价；等级、产地和计价单位应分别核对，不以报价反推实际耗用或因果。'}
+    return industry, market, observed_sources, reading
+
+
+def _report_forecast(data, product, spec, cutoff, include):
+    """Use only supplied home summary history, without aliases or live reloads."""
+    from enterprise.forecast import ForecastInputError, forecast_baseline
+    target = str(pd.Period(cutoff, freq='M') + 1)
+    result = {'available': False, 'method': 'naive', 'method_label': '上期持平（固定基线）',
+              'cutoff_month': cutoff, 'target_month': target, 'evidence_ids': [],
+              'boundary': '固定单步基线，不择优拟合；只使用截止月及以前成本，不使用未来实际值。'
+                          '预测不是预算、统计趋势、置信区间或节约承诺；未预测产量或总成本。'}
+    if not include:
+        return {**result, 'reason': '未选择预测基线'}, []
+    history = {}
+    for name in ('cost25', 'cost26'):
+        frame = data.get(name)
+        if isinstance(frame, pd.DataFrame):
+            history[name] = frame.loc[frame['月份'].le(cutoff)].copy() if '月份' in frame else frame.copy()
+    # Original budget is comparison-only; the engine never uses it in fitting.
+    if 'budget' in data:
+        history['budget'] = data['budget']
+    try:
+        value = forecast_baseline(history, factory='中药一厂', product=product, specification=spec,
+                                  cutoff_month=cutoff, horizon=1, method='naive', candidate_methods=('naive', 'ma3'))
+    except ForecastInputError as exc:
+        return {**result, 'reason': '预测输入不足或无效，未计算基线：' + str(exc)}, []
+    refs = [source_ref(name, row) for name, frame in history.items() if name != 'budget' and not frame.empty
+            for _, row in frame.loc[frame['月份'].isin(value['training_months'])].iterrows()]
+    ident = 'R8' + cutoff.replace('-', '')
+    sources = [{'id': ident, 'kind': 'forecast_baseline', 'elements': list(LABELS),
+                'text': f"上期持平固定基线：截止{cutoff}，目标{target}，单位成本{display(value['forecast']['unit_cost'])}元/盒。"
+                        '仅作预测基线，不是预算或已实现节约。',
+                'source': {'table': 'forecast_training', 'records': refs},
+                'scope': {'product': product, 'specification': spec, 'months': value['training_months']}}]
+    budget = value['budget_comparison']
+    budget_id = None
+    if budget['status'] == 'matched':
+        budget_id = 'R9' + cutoff.replace('-', '')
+        frame = history['budget']
+        rows = frame.loc[frame['月份'].eq(target)]
+        sources.append({'id': budget_id, 'kind': 'forecast_budget_reference', 'elements': list(LABELS),
+            'text': target + '同工厂同品同规格预算，仅比较当前输入快照，历史时点版本未核实。',
+            'source': {'table': 'budget', 'records': [source_ref('budget', row) for _, row in rows.iterrows()]},
+            'scope': {'product': product, 'specification': spec, 'months': [target]}})
+    sufficient = value['backtests']['naive']['status'] == 'evaluated'
+    return {**result, 'available': True, 'result': value, 'evidence_ids': [ident],
+            'budget_evidence_ids': [budget_id] if budget_id else [],
+            'backtest_reason': None if sufficient else
+                '连续历史不足四个月，naive与ma3没有共同已观测回测目标；不填充缺月，误差指标不计算。',
+            'interval_reason': '未建立校准区间，置信界限与覆盖率均不提供。'}, sources
+
+
+def _reference_tables(industry, market, forecast):
+    from .narrative import unit_amount
+
+    def reference_number(value, unit):
+        if value is None:
+            return '—'
+        return display_pct(value).removesuffix('%') if unit == '%' else unit_amount(value, minimum_places=4)
+
+    comparison, observations = [], []
+    for period in industry['periods']:
+        for row in period['rows']:
+            label = period['month'] + '\n' + row['category'] + '／' + row['metric']
+            comparison.append([label, str(row['reference_year']), row['unit'],
+                *[reference_number(row[key]['value'], row['unit']) for key in ('p25', 'p50', 'p75')],
+                reference_number(row['source_reported_home']['value'], row['unit']), _ref_text([row['evidence_id']])])
+            for side in ('home', 'peer'):
+                value = row[side]
+                observations.append([label, value['factory'], reference_number(value['value'], row['unit']), row['unit'],
+                    value['position_label'], reference_number(value['gap_from_p50']['value'], row['unit']),
+                    (value.get('reason') or row['interpretation']) + ' ' +
+                    _ref_text([row['evidence_id'], *row['observation_evidence_ids']])])
+    market_rows = [[row['month'], row['material'] + '／' + row['grade'], row['unit'],
+                   display(row['previous_price']), display(row['current_price']), display_pct(row['month_change_pct']),
+                   _ref_text([row['evidence_id']])] for row in market['rows']]
+    forecast_rows, backtest_rows, budget_rows = [], [], []
+    if forecast['available']:
+        value = forecast['result']
+        current, predicted = value['history'][-1], value['forecast']
+        for key, label in [('unit_cost', '单位成本'), *LABELS.items()]:
+            c = current['unit_cost'] if key == 'unit_cost' else current['elements'][key]
+            p = predicted['unit_cost'] if key == 'unit_cost' else predicted['elements'][key]
+            forecast_rows.append([label, forecast['cutoff_month'], display(c), forecast['target_month'], display(p),
+                                  _ref_text(forecast['evidence_ids'])])
+        for method, label in (('naive', '上期持平（固定基线）'), ('ma3', '近三月均值（仅回测参照）')):
+            evaluation = value['backtests'][method]
+            backtest_rows.append([label, str(evaluation['sample_count']), display(evaluation['mae']),
+                                 display(evaluation['rmse']), display_pct(evaluation['mape'])])
+        budget = value['budget_comparison']
+        if budget['status'] == 'matched':
+            budget_rows.append([forecast['target_month'], display(budget['budget_unit_cost']),
+                display(budget['delta'], signed=True), display_pct(budget['delta_percent']),
+                _ref_text(forecast['budget_evidence_ids'])])
+    tables = {
+        'industry_reference': _table(['观察月／类别／指标', '参考年份', '单位', 'P25', 'P50', 'P75', '文件列示本厂值', '引用'], comparison, industry['boundary']),
+        'industry_observed': _table(['观察月／类别／指标', '工厂', '月度计算值', '单位', '分位区间位置', '较P50差额', '限制与引用'], observations,
+            '百分比指标差额单位为百分点；其他差额沿用该行单位。缺少授权汇总或统计口径不可比时保留为空，不拿文件本厂值替代。'),
+        'market_reference': _table(['月份', '药材／规格等级', '单位', '上月参考价', '当月参考价', '环比', '引用'], market_rows, market['boundary']),
+        'forecast_baseline': _table(['成本指标（元/盒）', '截止月', '截止月实际', '目标月', '固定基线值', '引用'], forecast_rows, forecast['boundary']),
+        'forecast_backtest': _table(['方法', '共同回测数', 'MAE(元/盒)', 'RMSE(元/盒)', 'MAPE'], backtest_rows,
+            forecast.get('backtest_reason') or '按截止月以前已观测目标滚动回测；当前修订快照，不代表历史时点版本；不据同组误差选择方法。'),
+        'forecast_budget': _table(['目标月份', '预算元/盒', '基线减预算(元/盒)', '预算偏差', '引用'], budget_rows,
+            '仅对照输入快照中的同工厂同品同规格目标年月预算；历史时点预算版本未核实，预算差额不是节约。'),
+    }
+    weights = {'industry_reference': [30, 9, 9, 9, 9, 9, 17, 8], 'industry_observed': [28, 12, 12, 9, 15, 12, 30],
+               'market_reference': [12, 28, 10, 13, 13, 12, 8], 'forecast_baseline': [23, 16, 16, 16, 17, 8],
+               'forecast_backtest': [32, 15, 18, 18, 15], 'forecast_budget': [20, 20, 23, 22, 10]}
+    for name, table in tables.items():
+        table['column_weights'] = weights[name]
+    return tables
 
 
 def build_report_payload(params, tables=None, *, evidence=None, model_fn=None,
-                         model_version="not_configured", versions=None):
+                         model_version="not_configured", versions=None, evidence_fn=None):
     """Build once, export many. ``model_fn(payload, evidence)`` is opt-in injection.
 
     params: product, specification(optional only if unique), month, theme,
-    formal(default True), include_benchmark(default True), focus(optional
-    材料/人工/制费), use_llm(default True), compiled_date(optional ISO date).
-    No call to a remote model or implicit RAG reader is made here.
+    formal(default True), include_benchmark(default True), include_industry_reference
+    and include_forecast(default True), focus(optional 材料/人工/制费), use_llm
+    (default True), compiled_date(optional ISO date). Forecast uses a fixed naive
+    baseline at the report period end; it is not a configurable model or budget.
+    No implicit model or retrieval clients: authorized APP callbacks are optional.
+    evidence_fn(facts), when supplied, runs after deterministic calculations so
+    retrieval can target actual material/expense changes in this frozen scope.
     """
     if not isinstance(params, dict):
         raise ReportError("报告参数必须为对象")
@@ -314,7 +529,9 @@ def build_report_payload(params, tables=None, *, evidence=None, model_fn=None,
     params.setdefault("theme", THEMES[0])
     params.setdefault("formal", True)
     params.setdefault("include_benchmark", True)
-    for field in ("formal", "include_benchmark", "use_llm"):
+    params.setdefault('include_industry_reference', True)
+    params.setdefault('include_forecast', True)
+    for field in ("formal", "include_benchmark", "use_llm", 'include_industry_reference', 'include_forecast'):
         if field in params and not isinstance(params[field], bool):
             raise ReportError(field + "必须为布尔值")
     original = load_data() if tables is None else tables
@@ -354,9 +571,10 @@ def build_report_payload(params, tables=None, *, evidence=None, model_fn=None,
         summary_sources = [source_ref(table, row) for table, rows in (("cost26", current_rows), ("cost_history", previous_rows))
                            if rows is not None for _, row in rows.iterrows()]
         summary_id = add_evidence(f"{label}金额与产量来源；采用完整期间及明确产品规格。", summary_sources, list(LABELS))
+        comparator_ids = []
         for table, rows in (("yoy", yoy_rows), ("budget", budget_rows)):
             if rows is not None:
-                add_evidence("同比/预算独立期间来源", [source_ref(table, row) for _, row in rows.iterrows()], list(LABELS))
+                comparator_ids.append(add_evidence("同比/预算独立期间来源", [source_ref(table, row) for _, row in rows.iterrows()], list(LABELS)))
         elements = {}
         for key in LABELS:
             c, p = current[key], previous[key] if previous else None
@@ -393,7 +611,7 @@ def build_report_payload(params, tables=None, *, evidence=None, model_fn=None,
                  "current": _period_pack(current), "previous": _period_pack(previous), "yoy": _period_pack(yoy),
                  "budget": _period_pack(budget), "amount_change": mapping["_amount_change"], "elements": elements,
                  "volume_effect": sum_effect("volume_effect"), "unit_effect": sum_effect("unit_effect"),
-                 "evidence_ids": [summary_id], "completeness": {"cost26": {"complete": True, "missing_months": []}, **completeness}}
+                 "evidence_ids": [summary_id], "comparator_evidence_ids": comparator_ids, "completeness": {"cost26": {"complete": True, "missing_months": []}, **completeness}}
     trend = _trend(data, product, spec, months[-1])
     for row in trend:
         if row["available"]:
@@ -402,6 +620,17 @@ def build_report_payload(params, tables=None, *, evidence=None, model_fn=None,
     for row in market:
         row["evidence_id"] = add_evidence(f"{row['material']}市场参考报价{row['current']}{row['unit']}；非本厂采购实价。", [row["source"]], ["材料"], "reference_scenario")
     facts.update(trend=trend, market=market)
+    from .narrative import labor_snapshot, labor_decomposition
+    facts['labor'] = {name: labor_snapshot(_frame(data, 'labor', product, spec, span, complete=True), span)
+                      for name, span in (('current', months), ('previous', previous_months))}
+    facts['labor']['decomposition'] = labor_decomposition(facts['labor'])
+    facts['available_facts'] = ['完整当期成本与产量', '三要素核算金额']
+    for key, item in elements.items():
+        if item['details']:
+            facts['available_facts'].append('一厂' + LABELS[key] + '明细及来源')
+    if facts['labor']['current']:
+        facts['available_facts'].append('一厂汇总总工时、产量与工资；可计算平均工时和产出每工时')
+    facts['missing_facts'] = ['实际采购与领料结转计价凭证', '批次领退料实物量与收率记录', '个人岗位班次工时与工资分配明细']
     # Preserve the existing audited monthly facts/decomposition without fetching any
     # hidden market data. The quarter conclusion itself uses the period facts above.
     if len(months) == 1:
@@ -413,8 +642,13 @@ def build_report_payload(params, tables=None, *, evidence=None, model_fn=None,
         facts["reference_decomposition"] = build_decomposition(monthly, data.get("market", pd.DataFrame()))
     else:
         facts["monthly_totals"] = [row for row in trend if row["month"] in months]
-    from enterprise.benchmark_ai import EXPLANATION_PROMPT, BenchmarkValidationError, filter_evidence, parse_explanations
-    allowed, evidence_notes = filter_evidence(evidence or [], {"product": product, "specification": spec, "months": months})
+    from .claims import filter_report_evidence, generate_claims
+    if evidence_fn is not None:
+        if evidence is not None:
+            raise ReportError('不能同时传入静态证据和动态检索回调')
+        evidence = evidence_fn(deepcopy(facts))
+    retrieval_diagnostics = deepcopy(getattr(evidence, 'diagnostics', {}))
+    allowed, evidence_notes = filter_report_evidence(evidence or [], {"product": product, "specification": spec, "months": months})
     warnings.extend(evidence_notes)
     known = {row["id"] for row in sources}
     for row in allowed:
@@ -423,73 +657,122 @@ def build_report_payload(params, tables=None, *, evidence=None, model_fn=None,
             continue
         sources.append(deepcopy(row))
         known.add(row["id"])
-    explanations, diagnostics = None, []
-    status = "deterministic_requested" if not params.get("use_llm", True) else "model_not_configured"
-    fallback = "请求仅使用确定性分析" if status == "deterministic_requested" else "未注入已授权模型调用函数"
-    if model_fn is not None and params.get("use_llm", True):
-        try:
-            candidate = model_fn(deepcopy({"analysis_type": theme, "product": product, "specification": spec,
-                                           "months": months, "facts": facts, "limitations": LIMITATIONS,
-                                           "instruction": EXPLANATION_PROMPT + "\n本次为中药一厂单厂期间报告：只解释选中产品和规格的整个分析期间，不能用某一个月替代季度结论；本回调不生成二厂比较结论。",
-                                           "prompt_version": PROMPT_VERSION}), deepcopy(sources))
-            explanations = parse_explanations(candidate, sources)
-            status, fallback = "model_validated", None
-        except Exception as exc:
-            status = "model_rejected" if isinstance(exc, ValueError) else "model_unavailable"
-            # Exception text from a remote client can contain secrets or request bodies.
-            fallback = "模型输出未通过结构或证据校验" if isinstance(exc, ValueError) else "模型调用失败：" + type(exc).__name__
-            diagnostics.extend(str(exc).split("；") if isinstance(exc, BenchmarkValidationError) else [fallback])
-    overview, sections = _period_narrative(facts, explanations)
+    # Authorized reference projections precede the new bound-prose worker so its
+    # complete period statements see the same typed references as the renderer.
+    # They never become unqualified business-cause evidence.
+    industry, authorized_market, reference_sources, reference_reading = _report_references(
+        data, product, spec, months, [row for row in sources if row.get('kind') in {'industry_reference', 'market_reference'}],
+        params['include_industry_reference'])
+    claim_result = generate_claims(facts, [*sources, *reference_sources], product=product, specification=spec, months=months,
+                                   model_fn=model_fn, use_llm=params.get('use_llm', True), model_version=model_version,
+                                   market_reference=authorized_market, industry_comparison=industry)
+    status, fallback = claim_result['generation_status'], claim_result['fallback_reason']
+    diagnostics = list(evidence_notes) + list(claim_result['diagnostics'])
+    explanations = claim_result if claim_result['used_llm'] else None
+    forecast, forecast_sources = _report_forecast(data, product, spec, months[-1], params['include_forecast'])
+    sources.extend(reference_sources + forecast_sources)
+    from .narrative import period_narrative, knowledge_summary
+    overview, sections, claim_ledger, shared_narrative = period_narrative(
+        facts, claim_result, sources, product=product, months=months, specification=spec,
+        market_reference=authorized_market, industry_comparison=industry, return_shared=True)
     focus = params.get("focus")
     if focus is None:
         focus = max(elements, key=lambda key: abs(elements[key]["amount_delta"] or elements[key]["amount"]))
     if focus not in LABELS:
         raise ReportError("专题focus必须为材料、人工或制费")
     params["focus"] = focus
-    special = (f"专题焦点：{LABELS[focus]}。本专题将该要素的金额、明细、证据缺口与核查任务作为重点，"
-               "其余要素用于核对总成本闭合。" if theme == "专题分析" else
-               "季度专项：逐月呈现季度内变化，并以完整季度加权结果评价期间结构。" if len(months) > 1 else
-               "月度专项：结合连续月份趋势定位异常项目，并回查同产品同规格原始记录。")
-    special += "\n" + next(row["text"] for row in sections if row["element"] == focus)
+    from .narrative import special_observations, operating_observations, market_observations, unit_amount
+    special = (_topic_analysis(facts, focus, sections, product=product, specification=spec) if theme == '专题分析'
+               else special_observations(facts, focus, theme))
     benchmark = _benchmark(data, product, spec, months, params["include_benchmark"])
     for source in benchmark["sources"]:
         sources.append({"id": source["id"], "text": "同期同规格跨厂成本源记录", "kind": "data_fact",
                         "elements": list(LABELS), "source": {k: v for k, v in source.items() if k != "id"}})
+    from .peer_analysis import explain_peer
+    peer_analysis = explain_peer(benchmark, facts, allowed, product=product, specification=spec, months=months,
+                                  model_fn=model_fn, use_llm=params.get('use_llm', True), model_version=model_version)
+    existing_ids = {source['id'] for source in sources}
+    for source in peer_analysis['evidence']:
+        if source['id'] not in existing_ids:
+            sources.append(deepcopy(source))
+            existing_ids.add(source['id'])
+    benchmark['analysis'] = peer_analysis
     due = (compiled + timedelta(days=14)).isoformat()
+    from .actions import complete_reading_actions
+    from .claims import render_actions
+    for section in sections:
+        if not section.get('no_difference'):
+            section['actions'], section['action_supplements'] = complete_reading_actions(
+                facts, section['element'], section['actions'])
+            section['recommendation'] = render_actions(section['actions'], product, months,
+                immediate_action=section.get('immediate_action'),
+                accepted_model_recommendation=section.get('accepted_model_recommendation'))
     suggestions, tasks = [], []
-    for index, row in enumerate(sorted(sections, key=lambda row: row["element"] != focus), 1):
+    for index, row in enumerate(sorted((s for s in sections if not s.get('no_difference')), key=lambda row: row["element"] != focus), 1):
         key = row["element"]
+        departments = '、'.join(dict.fromkeys(part for action in row['actions'] for part in action['department'].split('、')))
         recommendation = {"id": f"S{index:03d}", "title": f"{product}{LABELS[key]}核查", "action": row["recommendation"],
-                          "department": ACTIONS[key][0], "owner_role": ACTIONS[key][0] + "负责人（待指定）",
+                          "department": departments, "owner_role": departments + "负责人（待指定）",
                           "priority": "高" if elements[key]["alert"] or (theme == "专题分析" and key == focus) else "中",
                           "expected_effect": "核实原因并形成可复核的改进方案；收益待测算", "due_date": due,
-                          "evidence_ids": row["evidence_ids"], "source": f"{theme}/{label}/{product}/{spec}/{LABELS[key]}"}
+                          "evidence_ids": row["evidence_ids"], "source": f"{theme}/{label}/{product}/{spec}/{LABELS[key]}",
+                           'immediate_action': row.get('immediate_action', ''),
+                           'evidence_gaps': deepcopy(row.get('evidence_gaps', [])),
+                           "period": {"months": list(months), "label": label, "coverage": "full_period"},
+                           "actions": deepcopy(row['actions']),
+                           "deliverables": [action['deliverable'] for action in row['actions']],
+                           "acceptance_criteria": [action['acceptance'] for action in row['actions']]}
         suggestions.append(recommendation)
         tasks.append({**recommendation, "id": "DRAFT-" + digest({"params": params, "element": key, "compiled": compiled.isoformat()})[:12],
                       "title": recommendation["title"], "status": "草稿", "dispatch_status": "未发送", "delivery_status": "未送达",
                       "approval_status": "待审批", "schedule_status": "未调度", "deadline_basis": "编制日起建议两周内，批准时需确认"})
     all_tables = _build_tables(facts, mapping, sections, benchmark, suggestions, tasks)
-    all_tables["suggestions"]["column_weights"] = [40, 16, 8, 23, 13]
-    all_tables["tasks"]["column_weights"] = [17, 25, 7, 23, 13, 15]
-    highlights = (f"本期数据覆盖{'、'.join(months)}，成本总额与三要素勾稽完成；"
-                  "已区分产量与单位成本影响，未将减产支出下降记作节约。")
+    all_tables.update(_reference_tables(industry, authorized_market, forecast))
+    all_tables["suggestions"]["column_weights"] = [10, 51, 22, 17]
+    all_tables["tasks"]["column_weights"] = [12, 38, 22, 28]
+    highlights = operating_observations(facts)
     alerts = [f"{LABELS[key]}期间单位成本变动{display(row['change_pct'], '%')}，严格超过±10%" for key, row in elements.items() if row["alert"]]
-    concerns = "；".join([*alerts, *warnings]) or "未发现可计算要素严格超过±10%的期间告警；仍应执行凭证、计量和生产记录复核。"
+    business_warnings = [note for note in warnings if any(word in note for word in ('缺月', '缺少完整', '明细缺', '期间不完整'))]
+    budget_gap = (facts['current']['unit_cost'] - facts['budget']['unit_cost']
+                  if facts.get('budget') and facts['current']['unit_cost'] is not None and facts['budget']['unit_cost'] is not None else None)
+    if budget_gap is not None and budget_gap > 0:
+        alerts.append(f"单位成本超预算{unit_amount(budget_gap)}元/盒，应按6.3逐项复核可控差额")
+    labor_bridge = facts['labor']['decomposition']
+    if labor_bridge.get('available') and labor_bridge['hours_change_pct'] > 0:
+        alerts.append(f"单位工时投入增加{display(labor_bridge['hours_change_pct'], '%')}，需核对排产及岗位班次记录")
+    concerns = '；'.join([*alerts, *business_warnings]) or '本期未发现超过设定阈值的单位要素波动；后续关注实际计价、生产投入与归集口径的持续可比性。'
     benchmark_structure = ("完整期间标准化金额差" + display(benchmark["normalized_amount"], signed=True) + "元。" + benchmark["formula"]
                            if benchmark["available"] else benchmark["reason"])
-    benchmark_causes = benchmark.get("limitation", benchmark.get("reason")) or "待核查"
+    from .actions import peer_action_text, peer_action_boundary
+    for section in peer_analysis['sections']:
+        if not section.get('no_difference'):
+            # Cross-factory plans retain their validated paired scope. Home
+            # month-on-month drivers must not become invented peer differences.
+            section['text'] += '\n' + peer_action_text(section['actions'])
+    if peer_analysis['available']:
+        lead = '本节比较期间为' + '、'.join(months) + '，逐月差额和要素结构分别见5.1、5.2。'
+        peer_analysis['text'] = lead + '\n\n' + '\n\n'.join(row['text'] for row in peer_analysis['sections'])
+        if any(not row.get('no_difference') for row in peer_analysis['sections']):
+            peer_analysis['action_boundary'] = peer_action_boundary()
+            peer_analysis['text'] += '\n\n' + peer_analysis['action_boundary']
+    benchmark_causes = peer_analysis['text']
+    followup_criteria = shared_narrative.get('followup_criteria', '')
+    if not followup_criteria and any(not row.get('no_difference') for row in peer_analysis['sections']):
+        from enterprise.analysis_narrative import common_action_criteria
+        followup_criteria = common_action_criteria()
     mapping.update({"报告标题": f"{label}{product}{theme}报告", "报告类型": theme, "编制日期": compiled.isoformat(),
                     "报告编号": "CB-" + uuid.uuid4().hex[:12].upper(),
-                    "材料成本归因分析文本": sections[0]["text"], "成本异常排查分析": special + "\n" + concerns,
+                    "材料成本归因分析文本": sections[0]["text"], "成本异常排查分析": special,
                     "差异结构拆解分析": benchmark_structure, "差异归因分析文本": benchmark_causes,
                     "本月亮点": highlights, "需关注问题": concerns})
     for name, table_key in (("原材料成本明细表格", "material"), ("近6个月成本趋势表格", "trend"),
                             ("原材料价格跟踪表格", "market"), ("对标差异表格", "benchmark"),
                             ("改进建议表格", "suggestions"), ("整改任务表格", "tasks")):
         mapping[name] = _table_text(all_tables[table_key])
+    adopted_knowledge = {ref for claim in [*claim_ledger, *peer_analysis.get('claim_ledger', [])] for ref in claim['knowledge_ids']}
     for placeholder, terms in (("配方文档引用", ("配方",)), ("工艺文档引用", ("工艺", "设备")),
                                ("GMP文档引用", ("GMP", "法规")), ("行业基准引用", ("行业", "基准"))):
-        refs = [row for row in sources if row.get("kind") == "document_basis" and any(term in canonical(row) for term in terms)]
+        refs = [row for row in sources if row['id'] in adopted_knowledge and row.get("kind") == "document_basis" and any(term in canonical(row) for term in terms)]
         mapping[placeholder] = "；".join(f"[{row['id']}] {row['source'].get('file', '受控知识文档')}" for row in refs) or "未提供适用且已授权的知识证据，不据此作事实结论"
     registry = parse_template()
     missing = [name for name in registry if name not in mapping]
@@ -501,9 +784,19 @@ def build_report_payload(params, tables=None, *, evidence=None, model_fn=None,
     # A font that covers a short Chinese probe may still omit PDF radical glyphs.
     font = font_descriptor(canonical({'sources': sources, 'params': params, 'sections': sections,
                                       'mapping': mapping, 'tables': all_tables, 'benchmark': benchmark,
+                                      'industry_comparison': industry, 'market_reference': authorized_market,
+                                      'forecast_baseline': forecast, 'reference_reading': reference_reading,
                                       'limitations': LIMITATIONS, 'warnings': warnings}))
     version_map = {"schema": SCHEMA_VERSION, "calculation": CALCULATION_VERSION, "model": model_version,
-                   "prompt": PROMPT_VERSION, "template": {"version": TEMPLATE_VERSION, "file": TEMPLATE_PATH.name,
+                   'unit_effect_display': 'nonzero-four-significant/1.0',
+                   'reading_actions': 'observed-drivers-compact-core-common-criteria/2.1',
+                    'attribution_narrative': shared_narrative['schema_version'],
+                    'narrative_adapter': shared_narrative['input']['adapter_version'],
+                    'report_references': 'monthly-typed-reference-sections/1.0',
+                    'forecast_baseline': 'report-fixed-naive/1.0',
+                   "prompt": claim_result['prompt_version'],
+                    **({'reading_style': claim_result['reading_style']} if claim_result.get('reading_style') else {}),
+                    "template": {"version": TEMPLATE_VERSION, "file": TEMPLATE_PATH.name,
                    "sha256": hashlib.sha256(template_bytes).hexdigest()},
                    "renderer": renderer_versions(font), "data_sha256": digest(_records(original)),
                    "knowledge": [{"id": row["id"], "version_id": row.get("version_id"),
@@ -514,9 +807,19 @@ def build_report_payload(params, tables=None, *, evidence=None, model_fn=None,
                "params": params, "period": {"label": label, "months": months, "previous_months": previous_months, "yoy_months": yoy_months},
                "formal": params["formal"], "review_status": "needs_review", "facts": facts, "mapping": mapping,
                "overview": overview, "sections": sections, "special_analysis": special, "highlights": highlights,
-               "concerns": concerns, "tables": all_tables, "sources": sources, "benchmark": benchmark,
+               'shared_narrative': shared_narrative,
+               'followup_criteria': followup_criteria,
+               "concerns": concerns, "market_observations": market_observations(facts),
+               "tables": all_tables, "sources": sources, "benchmark": benchmark,
+                'industry_comparison': industry, 'market_reference': authorized_market,
+                'forecast_baseline': forecast,
+                'reference_usage': {'eligible_ids': [row['id'] for row in allowed if row.get('kind') in {'industry_reference', 'market_reference'}],
+                                    'displayed_ids': sorted(reference_reading), 'causal_use': False},
                "suggestions": suggestions, "task_drafts": tasks, "used_llm": explanations is not None,
                "generation_status": status, "fallback_reason": fallback,
+               "generation": {'single_factory': claim_result,
+                              'cross_factory': {key: peer_analysis.get(key) for key in ('used_llm', 'generation_status', 'fallback_reason', 'generation')}},
+               "knowledge_usage": knowledge_summary(sources, claim_ledger, retrieval_diagnostics),
                "assumptions": [{"element": row["element"], "claim_type": "hypothesis", "text": row["hypothesis"],
                                 "evidence_ids": row["evidence_ids"], "missing_evidence": row["missing_evidence"]} for row in sections],
                "validation": {"numeric_facts": "program_rendered", "model_explanations": "passed" if explanations else "not_used",
@@ -525,18 +828,32 @@ def build_report_payload(params, tables=None, *, evidence=None, model_fn=None,
                "template_base64": base64.b64encode(template_bytes).decode("ascii")}
     payload["charts"] = make_charts(facts, font)
     payload["blocks"] = _blocks(payload)
+    from .presentation import reading_appendix
+    payload['blocks'], payload['reading_citations'] = reading_appendix(payload, payload['blocks'])
+    # The immutable reference CSV row may contain future monthly columns or an
+    # unverified source evaluation. Only bounded projections enter reading exports;
+    # exact raw text, offsets, row/file hashes remain in sources and audit metadata.
+    citation_table = next(block for block in payload['blocks'] if block.get('name') == 'citations')
+    for entry, row in zip(payload['reading_citations']['entries'], citation_table['rows']):
+        if entry['evidence_id'] in reference_reading:
+            row[1] = reference_reading[entry['evidence_id']]
+            entry['reference_projection'] = {'text': row[1], 'months': list(months),
+                                             'raw_source_preserved': True, 'causal_use': False}
     payload["blocks"], display_normalization = _normalize_display_blocks(payload["blocks"])
     payload["versions"]["display_text"] = display_normalization
-    if display_normalization["replacements"]:
-        payload["blocks"].append({"kind": "paragraph", "text":
-            "呈现规范化：PDF提取的康熙部首及西字部首异体按cjk-display/1.0转为标准汉字；"
-            "仅作用于双格式共用的展示块，原件、完整证据正文与来源哈希保持不变。"})
+    from .structure import validate_blocks
+    structure = validate_blocks(payload['blocks'], template_bytes=template_bytes, product=product,
+                                period=payload['period'], charts=payload['charts'])
+    payload['validation']['template_structure'] = structure
+    if not structure['passed']:
+        raise ReportError('报告完整模板内容校验失败：' + canonical(structure.get('errors') or structure.get('metrics')))
     payload = json.loads(canonical(payload))  # Detached data, no DataFrame/date/NaN leaks.
     payload["frozen_hash"] = digest(payload)
     return payload
 
 
 def _build_tables(facts, mapping, sections, benchmark, suggestions, tasks):
+    from .narrative import unit_amount
     elements = facts["elements"]
     metrics = []
     for label, value_key in (("产量(盒)", "volume"), ("单位成本(元/盒)", "unit_cost"), ("总成本(元)", "total_cost")):
@@ -555,14 +872,14 @@ def _build_tables(facts, mapping, sections, benchmark, suggestions, tasks):
                  display(row["amount_delta"], signed=True), _ref_text(row["evidence_ids"])] for row in elements["材料"]["details"]]
     labor = [[name, str(mapping[c]), str(mapping[p]), str(mapping[rate])] for name, c, p, rate in (
         ("单位人工(元/盒)", "人工单位成本", "上月人工单位成本", "人工环比"),
-        ("工时(h/万盒)", "本月工时", "上月工时", "工时环比"), ("平均小时工资(元/h)", "本月时薪", "上月时薪", "时薪环比"),
+        ("工时(h/万盒)", "本月工时", "上月工时", "工时环比"), ("归集人工费用(元/h)", "本月时薪", "上月时薪", "时薪环比"),
         ("效率(盒/人·日)", "本月效率", "上月效率", "效率环比"))]
     mfg = [[row["name"], display(row["current_unit"]), display(row["previous_unit"]), display(row["current_amount"]),
             display(row["amount_delta"], signed=True), _ref_text(row["evidence_ids"])] for row in elements["制费"]["details"]]
     trend = [[row["month"], display(row.get("volume")), *[display(row.get("elements", {}).get(key)) for key in LABELS],
               display(row.get("unit_cost")), display(row.get("mom_pct"), "%")] for row in facts["trend"]]
-    market = [[row["material"], row["unit"], display(row["first"]), display(row["current"]), display(row["change_pct"], "%"),
-               "市场参考 " + _ref_text([row["evidence_id"]])] for row in facts["market"]]
+    market = [[row["material"], row["unit"], display(row['previous']), display(row["current"]), display_pct(row['mom_pct']),
+               _ref_text([row["evidence_id"]])] for row in facts["market"]]
     comparison = []
     for period in benchmark["periods"]:
         if not period["available"]:
@@ -570,25 +887,51 @@ def _build_tables(facts, mapping, sections, benchmark, suggestions, tasks):
             continue
         for row in period["elements"]:
             comparison.append([period["month"], LABELS[row["element"]], display(row["home_unit_cost"]), display(row["peer_unit_cost"]),
-                               display(row["unit_gap"], signed=True), display(row["gap_pct"], "%"), display(row["normalized_amount"], signed=True)])
+                               unit_amount(row["unit_gap"], signed=True), display_pct(row.get('gap_pct_exact') if row.get('gap_pct_exact') is not None else
+                                            Decimal(str(row['unit_gap'])) / Decimal(str(row['peer_unit_cost'])) * 100 if row['peer_unit_cost'] else None), display(row["normalized_amount"], signed=True)])
+    bridge = facts.get('labor', {}).get('decomposition', {})
+    labor_bridge = ([[label, unit_amount(bridge[unit], signed=True, minimum_places=6), display(bridge[value], signed=True)]
+                     for label, unit, value in [('单位工时投入', 'hours_unit_effect', 'hours_amount_effect'),
+                                                ('每工时归集费率', 'rate_unit_effect', 'rate_amount_effect'),
+                                                ('合计', 'unit_delta', 'amount_delta')]] if bridge.get('available') else [])
+    peer_structure = [[row['label'], display(row['amount'], signed=True), display_pct(row['contribution_pct']), row['direction'], row['effect']]
+                      for row in benchmark.get('structure', [])]
+    if peer_structure:
+        peer_structure.append(['合计', display(benchmark['normalized_amount'], signed=True),
+                               '100.00%' if benchmark['normalized_amount'] else '—', '按一厂产量比较', '净差额'])
+    advice = []
+    for suggestion in suggestions:
+        # The same compact reading projection feeds UI, task drafts and exports.
+        # Per-object voucher/deliverable/acceptance fields remain in the snapshot,
+        # not repeated as a prose template on every object.
+        text = suggestion['action']
+        if suggestion.get('evidence_gaps'):
+            text += '\n证据缺口：' + '；'.join(suggestion['evidence_gaps']) + '。'
+        advice.append([suggestion['id'], text, suggestion['department'], suggestion['priority'] + '／' + suggestion['due_date']])
     return {
-        "metrics": _table(["指标", "本期", "前期", "变动率", "上年同期", "同比", "预算", "预算偏差"], metrics),
+        "metrics": _table(["指标", "本期", "前期", "变动率", "上年同期", "同比", "预算", "预算偏差"], metrics,
+                          '来源：' + _ref_text(facts['evidence_ids'] + facts.get('comparator_evidence_ids', []))),
         "structure": _table(["要素", "元/盒", "金额(元)", "占比", "金额变动(元)", "金额贡献度"], structure),
         "material": _table(["原材料", "本期元/盒", "前期元/盒", "本期金额(元)", "变动额(元)", "引用"], material,
                            "单位消耗成本不是采购单价；缺失/不完整期间显示—，不按零补齐。"),
-        "labor": _table(["指标", "本期", "前期", "变动率"], labor, "工时、时薪、效率按完整期间的投入与产出汇总后计算；零分母显示—。"),
+        "labor": _table(["指标", "本期", "前期", "变动率"], labor, "归集费率为人工总额除以总工时，不等于个人时薪；工时、产出按完整期间汇总，零分母显示—。"),
+        'labor_bridge': _table(['人工分解指标', '单位成本影响(元/盒)', '按本期产量折算(元)'], labor_bridge,
+                              bridge.get('method') if bridge.get('available') else bridge.get('reason')),
         "mfg": _table(["费用类别", "本期元/盒", "前期元/盒", "本期金额(元)", "变动额(元)", "引用"], mfg),
         "trend": _table(["月份", "产量(盒)", "材料元/盒", "人工元/盒", "制费元/盒", "单位成本", "连续环比"], trend,
-                        "窗口截至分析期末；缺月保留空值，连续环比不跳过缺失月份。"),
-        "market": _table(["药材", "单位", "年初参考价", "期末参考价", "变动率", "属性/引用"], market,
-                         "仅展示已匹配材料与分析期末可用市场行情；不是实际采购价。"),
+                        "窗口截至分析期末；缺月保留空值，连续环比不跳过缺失月份。来源：" + _ref_text([r['evidence_id'] for r in facts['trend'] if r.get('evidence_id')])),
+        "market": _table(["药材", "单位", "上月参考价", "期末参考价", "环比", "引用"], market,
+                         "期末月为" + facts['months'][-1] + "；报价按各自计价单位比较，不是实际采购价。"),
         "benchmark": _table(["月份", "要素", "一厂元/盒", "二厂元/盒", "单位差", "差异率", "标准化差额(元)"], comparison,
                             benchmark.get("limitation") or benchmark["reason"]),
-        "suggestions": _table(["建议", "责任部门", "优先级", "预期效果", "建议完成"],
-                              [[row["action"], row["department"], row["priority"], row["expected_effect"], row["due_date"]] for row in suggestions]),
-        "tasks": _table(["草稿编号", "任务/责任岗位", "优先级", "来源", "建议截止", "状态"],
-                        [[row["id"], row["title"] + "；" + row["owner_role"], row["priority"], row["source"], row["due_date"],
-                          "待审批／未发送／未送达"] for row in tasks], "任务为建议草稿；部门岗位尚需指派到责任人，未创建外部任务。"),
+        'benchmark_structure': _table(['要素', '标准化差额(元)', '净差额贡献', '成本水平', '形成或抵消'], peer_structure,
+                                      '贡献为要素差额÷净差额；反向项目可为负贡献，净差额为零时贡献无定义。' if peer_structure else benchmark.get('reason')),
+        "suggestions": _table(["建议编号", "当前核对、后续方向与证据缺口", "责任部门", "优先级／建议完成"], advice,
+                              '本节统一适用上列共同完成口径；后续凭证需求与当前可执行核对分开，未经批准不实施或派发。'
+                              if advice else '本期可比要素均无变化，无新增差异核查建议。'),
+        "tasks": _table(["建议编号", "责任岗位", "建议截止", "任务状态"],
+                        [[suggestions[i]['id'], row["owner_role"], row["due_date"], "待审批／未发送／未送达"] for i, row in enumerate(tasks)],
+                        "任务对应6.3同号建议，责任人待指定；尚未创建外部任务。" if tasks else '本期无新增任务；未发送、未送达。'),
     }
 
 
@@ -663,73 +1006,126 @@ def _blocks(payload):
     def text(value, kind="paragraph", level=1):
         blocks.append({"kind": kind, "text": value, "level": level})
     def table(name):
-        blocks.append({"kind": "table", "name": name, **payload["tables"][name]})
+        value = payload['tables'][name]
+        if value['rows']:
+            blocks.append({"kind": "table", "name": name, **value})
+        elif name in ('suggestions', 'tasks'):
+            text(value.get('note') or '本期无新增差异核查任务。')
+        else:
+            reasons = {'material': '缺少完整期间原材料明细，不将缺失材料或月份补零。',
+                       'mfg': '缺少完整期间制造费用明细，不将缺失费用项目补零。',
+                       'market': '缺少与本产品材料、计价单位及分析期间匹配的市场参考行情，相关价格趋势不计算。',
+                       'benchmark': '未选择跨厂对标或缺少同产品同规格完整期间二厂成本，跨厂差异不计算。'}
+            text(reasons.get(name, '缺少该节所需的完整期间资料，相关指标不计算。') + ' ' + (value.get('note') or ''))
     def chart(name):
         if name in payload["charts"]:
             blocks.append({"kind": "chart", "name": name, "caption": payload["charts"][name]["caption"]})
     text(payload["mapping"]["报告标题"], "title")
-    text(f"报告编号：{payload['report_id']}　版本：{TEMPLATE_VERSION}　编制日期：{payload['mapping']['编制日期']}")
-    text("完整期间报告／待专业审核" if payload["formal"] else "非正式核查稿／资料缺口详见附录")
-    text("生成状态：" + ("已使用通过结构与引用校验的模型假设" if payload["used_llm"] else "确定性分析；" + payload["fallback_reason"]))
+    text(f"报告编号：{payload['report_id']}　编制日期：{payload['mapping']['编制日期']}")
+    blocks.append({'kind': 'paragraph', 'role': 'approval_status', 'text':
+                   '完整期间报告／待专业审核' if payload['formal'] else '非正式核查稿／资料缺口详见正文'})
     text("一、封面与基本信息", "heading")
     metadata = _table(["项目", "内容"], [["报告类型", payload["params"]["theme"]], ["期间", "、".join(payload["period"]["months"])],
                                            ["产品/规格", payload["params"]["product"] + "／" + payload["params"]["specification"]],
-                                           ["工厂", "中药一厂"], ["审核状态", "待专业审核；未经批准不代表正式发布"],
-                                           ["数据来源", "统一合并成本数据；来源记录与内容哈希见附录"]])
+                                           ["工厂", "中药一厂"],
+                                           ["数据来源", "成本汇总与同期间明细；引用见附录，完整追溯信息见独立审计附件"]])
     blocks.append({"kind": "table", **metadata})
     text("二、总成本概览", "heading")
     text(payload["overview"])
+    industry = payload.get('industry_comparison')
+    if industry and payload['params'].get('include_industry_reference', True):
+        from .narrative import unit_amount
+        anchors = []
+        for period in industry['periods']:
+            for row in period['rows']:
+                if row['calculation'] != 'unit_conversion' or row['home']['value'] is None:
+                    continue
+                anchors.append(f"{period['month']}{row['home']['factory']}按所选规格折算单位成本"
+                    f"{unit_amount(row['home']['value'], minimum_places=4)}{row['unit']}；"
+                    f"{row['reference_year']}年{row['category']}参考P25/P50/P75为"
+                    + '/'.join(unit_amount(row[key]['value'], minimum_places=4) for key in ('p25', 'p50', 'p75'))
+                    + row['unit'] + '，数值位置' + row['home']['position_label'] + '。 '
+                    + _ref_text([row['evidence_id'], *row['observation_evidence_ids']]))
+        if anchors:
+            text('行业单位成本参考（逐月列示）：' + '\n'.join(anchors)
+                 + '\n年度类别基准的统计窗口、样本与产品组合未明确，不是同品同规格月度行业实测；'
+                   '不平均为季度基准，不生成效率评分或节约额。明细及源文件本厂值分列见第五节。')
     text("2.1 核心指标一览", "heading", 2); table("metrics")
     text("2.2 成本结构与金额桥接", "heading", 2); table("structure")
     text(payload["mapping"]["波动告警描述"]); chart("waterfall"); chart("structure")
     text("三、成本要素明细分析", "heading")
     for index, section in enumerate(payload["sections"], 1):
         text(f"3.{index} {section['title']}分析", "heading", 2)
+        if section['element'] == '材料':
+            text('3.1.1 原材料成本明细', 'heading', 3)
         table({"材料": "material", "人工": "labor", "制费": "mfg"}[section["element"]])
+        if section['element'] == '材料':
+            text('3.1.2 材料成本变动归因', 'heading', 3)
         text(section["text"])
+        if section['element'] == '人工' and payload['tables']['labor_bridge']['rows']:
+            table('labor_bridge')
     text("四、重点产品专项分析", "heading")
     text("4.1 近六个月趋势与期间范围", "heading", 2); table("trend"); chart("trend")
-    text("4.2 专项问题与异常排查", "heading", 2); text(payload["special_analysis"]); text(payload["concerns"])
-    text("4.3 原材料市场参考行情", "heading", 2); table("market")
+    text("4.2 专项问题与异常排查", "heading", 2); text(payload["special_analysis"])
+    forecast = payload.get('forecast_baseline')
+    if forecast and payload['params'].get('include_forecast', True):
+        text('预测基线（固定上期持平，不是预算）')
+        text(f"截止月：{forecast['cutoff_month']}；目标月：{forecast['target_month']}。" + forecast['boundary'])
+        if forecast['available']:
+            table('forecast_baseline')
+            text('连续训练月份：' + '、'.join(forecast['result']['training_months']) + '；点基线实际使用：' +
+                 '、'.join(forecast['result']['method_training_months']) + '。 ' + _ref_text(forecast['evidence_ids']))
+            table('forecast_backtest')
+            text(forecast['interval_reason'])
+            if payload['tables']['forecast_budget']['rows']:
+                table('forecast_budget')
+            else:
+                text(forecast['result']['budget_comparison']['note'])
+        else:
+            text(forecast['reason'])
+    text("4.3 原材料市场参考行情", "heading", 2)
+    authorized_market = payload.get('market_reference')
+    if authorized_market and authorized_market['available']:
+        # Governed references replace the legacy view rather than contradicting
+        # them with an empty ungoverned-table explanation. Frozen old blocks are
+        # never reconstructed during replay.
+        text('已授权市场参考（按月与规格等级列示）'); table('market_reference')
+    else:
+        table('market'); text(payload['market_observations'])
     text("五、对标分析（与中药二厂）", "heading")
     text("5.1 同期同规格差异", "heading", 2); table("benchmark")
-    text("5.2 差异结构拆解", "heading", 2); text(payload["mapping"]["差异结构拆解分析"])
+    text("5.2 差异结构拆解", "heading", 2); text(payload["mapping"]["差异结构拆解分析"]); table('benchmark_structure')
     text("5.3 差异原因核查", "heading", 2); text(payload["mapping"]["差异归因分析文本"])
+    industry = payload.get('industry_comparison')
+    if industry and payload['params'].get('include_industry_reference', True):
+        text('行业参考比较（年度类别基准，逐月列示）')
+        text(industry['boundary'])
+        if industry['available']:
+            table('industry_reference'); table('industry_observed')
+        for period in industry['periods']:
+            if not period['available']:
+                text(period['month'] + '：' + period['reason'])
+        # Source-level alerts are displayed once even in quarterly reports. They
+        # remain review candidates; they never create an extra task or savings.
+        seen_alerts = set()
+        for period in industry['periods']:
+            for alert in period['alerts']:
+                if alert['alert_id'] not in seen_alerts:
+                    seen_alerts.add(alert['alert_id'])
+                    text(alert['finding'] + alert['boundary'] + ' ' + _ref_text(alert['evidence_ids']))
     text("六、总结与建议", "heading")
-    text("6.1 本期管理亮点", "heading", 2); text(payload["highlights"])
+    text("6.1 本期经营观察", "heading", 2); text(payload["highlights"])
     text("6.2 需关注问题", "heading", 2); text(payload["concerns"])
-    text("6.3 改进建议", "heading", 2); table("suggestions")
+    text("6.3 改进建议", "heading", 2)
+    if payload.get('followup_criteria'):
+        text(payload['followup_criteria'])
+    table("suggestions")
     text("6.4 整改任务草稿", "heading", 2); table("tasks")
-    text("附录一：来源、知识引用与证据边界", "heading")
-    for limit in payload["limitations"]:
-        text(limit)
-    for name in ("配方文档引用", "工艺文档引用", "GMP文档引用", "行业基准引用"):
-        text(name + "：" + payload["mapping"][name])
-    documents, index_rows = _source_catalog(payload["sources"])
-    index_table = _table(["证据ID", "事实或依据摘要", "来源档案"], index_rows)
-    index_table["column_weights"] = [13, 70, 17]
-    blocks.append({"kind": "table", **index_table})
-    for document in documents:
-        text(f"{document['id']}  {document['file']}", "heading", 2)
-        text("来源路径：" + document["path"])
-        text("来源SHA256：" + (document["sha256"] or "未提供源文件哈希；本次输入摘要见版本附录"))
-        if document["sheet"]:
-            text("工作表：" + document["sheet"])
-        for scope in document["scopes"]:
-            text("适用记录：" + scope)
-        text("来源定位（record_number为含表头记录序号；line仅为显式物理行）：")
-        for location in document["locations"]:
-            text(location)
-    text("附录二：数据与生成版本", "heading")
-    for name, value in payload["versions"].items():
-        text(name + "：" + (canonical(value) if isinstance(value, (dict, list)) else str(value)))
-    text("analysis_run_id：" + payload["analysis_run_id"])
-    text("历史回看读取冻结结果，不调用模型；数值复算与模型重跑须建立新的分析运行。")
     return blocks
 
 
 def verify_payload(payload):
-    if not isinstance(payload, dict) or payload.get("schema_version") != SCHEMA_VERSION:
+    if not isinstance(payload, dict) or payload.get("schema_version") not in SUPPORTED_SCHEMAS:
         raise ReportError("报告快照结构版本不受支持")
     body = {key: value for key, value in payload.items() if key != "frozen_hash"}
     if payload.get("frozen_hash") != digest(body):
@@ -737,6 +1133,6 @@ def verify_payload(payload):
     raw = base64.b64decode(payload["template_base64"], validate=True)
     if hashlib.sha256(raw).hexdigest() != payload["versions"]["template"]["sha256"]:
         raise ReportError("冻结模板哈希不一致")
-    if payload["versions"]["renderer"]["version"] != RENDERER_VERSION:
+    if payload["versions"]["renderer"]["version"] not in SUPPORTED_RENDERERS:
         raise ReportError("渲染器版本不一致，须用记录的版本重放")
     return True
